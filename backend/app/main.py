@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.project import router as project_router
+
 app = FastAPI(title="Freeweb Agent MVP API")
 
 # 개발 단계 : 프론트(Next.js)에서 호출 허용.
@@ -12,6 +14,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(project_router)
 
 @app.get("/")
 def root():

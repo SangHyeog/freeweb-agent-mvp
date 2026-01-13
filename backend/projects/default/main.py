@@ -1,1 +1,1 @@
-print("Hello from Freeweb Agent Sandbox")
+print('Hello from Freeweb Agent Sandbox')
