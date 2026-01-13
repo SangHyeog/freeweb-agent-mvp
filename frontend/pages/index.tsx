@@ -27,12 +27,24 @@ export default function Home() {
 
   // 실행
   const runCode = async () => {
+    /*
     setOutput("Running...\n");
     const res = await fetch(`${API_BASE}/run`, {
       method: "POST",
     });
     const data = await res.json();
     setOutput(data.output);
+    */
+    setOutput("")
+    const ws = new WebSocket("ws://localhost:8000/ws/run");
+
+    ws.onmessage = (event) => {
+      setOutput((prev) => prev + event.data);      
+    };
+
+    ws.onerror = () => {
+      setOutput((prev) => prev + "\n[Process finished]\n");
+    };
   };
 
   return (
