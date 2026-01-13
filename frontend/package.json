@@ -1,0 +1,7 @@
+{
+    "name": "freeweb-agent-frontend",
+    "private": true,
+    "scripts": {
+        "dev": "next dev"
+    }
+}
