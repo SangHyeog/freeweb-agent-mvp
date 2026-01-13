@@ -1,0 +1,6 @@
+version: "3.9"
+
+services:
+  backend:
+    image: python:3.11
+    container_name: freeweb-backend
