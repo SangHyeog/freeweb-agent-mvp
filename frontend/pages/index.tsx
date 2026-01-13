@@ -5,6 +5,7 @@ const API_BASE = "http://localhost:8000";
 
 export default function Home() {
   const [code, setCode] = useState("");
+  const [output, setOutput] = useState("");
 
   // 처음 페이지 로드 시 backend에서 코드 가져오기
   useEffect(() => {
@@ -24,6 +25,16 @@ export default function Home() {
     alert("Saved!");
   };
 
+  // 실행
+  const runCode = async () => {
+    setOutput("Running...\n");
+    const res = await fetch(`${API_BASE}/run`, {
+      method: "POST",
+    });
+    const data = await res.json();
+    setOutput(data.output);
+  };
+
   return (
     <div style={{ padding: 20 }}>
       <h2>Freeweb Agent MVP</h2>
@@ -35,9 +46,22 @@ export default function Home() {
         onChange={(value) => setCode(value || "")}
       />
 
-      <button onClick={saveCode} style={{ marginTop: 10 }}>
-        Save
-      </button>
+      <div style={{ marginTop: 10 }}>
+        <button onClick={saveCode}>Save</button>
+        <button onClick={runCode} style={{ marginLeft: 10 }}>Run</button>
+      </div>
+
+      <pre
+        style={{
+          marginTop: 20,
+          background: "#111",
+          color: "#0f0",
+          padding: 10,
+          minHeight: 100,
+        }}
+      >
+        {output}
+      </pre>
     </div>
   );
 }
