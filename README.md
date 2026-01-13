@@ -1,8 +1,14 @@
 # Freeweb-agent-mvp
 
-Minimal Replit-Agent style MVP.
+A minimal Replit-Agent-like MVP.
 
-## Structure
-- backend: FastAPI backend
-- frontend: Next.js frontend
-- runtime: Docker sandbox runtime
+## Features
+- Web-based code editor (Monaco)
+- Project file save / load
+- Docker sandbox execution
+- Real-time execution logs via WebSocket
+
+## Tech Stack
+- Backend: FastAPI
+- Frontend: Next.js
+- Runtime: Docker
