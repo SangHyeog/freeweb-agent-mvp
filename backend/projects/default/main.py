@@ -1,4 +1,3 @@
-import time
-for i in range(20):
-    print("Tick", i, flush=True)
-    time.sleep(1)
+from utils import add
+
+print(add(2, 3))
