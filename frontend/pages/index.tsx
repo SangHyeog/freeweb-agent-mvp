@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 
 const API_BASE = "http://localhost:8000";
@@ -6,6 +6,8 @@ const API_BASE = "http://localhost:8000";
 export default function Home() {
   const [code, setCode] = useState("");
   const [output, setOutput] = useState("");
+  const [isRunning, setIsRunning] = useState(false);
+  const wsRef = useRef<WebSocket | null>(null);
 
   // 처음 페이지 로드 시 backend에서 코드 가져오기
   useEffect(() => {
@@ -35,6 +37,7 @@ export default function Home() {
     const data = await res.json();
     setOutput(data.output);
     */
+    /*
     setOutput("")
     const ws = new WebSocket("ws://localhost:8000/ws/run");
 
@@ -44,7 +47,44 @@ export default function Home() {
 
     ws.onerror = () => {
       setOutput((prev) => prev + "\n[Process finished]\n");
+    };*/
+    if (isRunning) return;
+
+    setOutput("");
+    setIsRunning(true);
+
+    const ws = new WebSocket("ws://localhost:8000/ws/run");
+    wsRef.current = ws;
+
+    ws.onmessage = (event) => {
+      setOutput((prev) => prev + event.data);
     };
+
+    ws.onerror = () => {
+      setOutput((prev) => prev + "\n[WebSocket Error]\n");
+      setIsRunning(false);
+      wsRef.current = null;
+    };
+
+    ws.onclose = () => {
+      setOutput((prev) => prev + "\n[WebSocket Closed]\n");
+      setIsRunning(false);
+      wsRef.current = null;
+    };
+  };
+
+  const stopCode = async () => {
+    //  서버에 Stop 요청
+    await fetch(`${API_BASE}/stop`, {
+      method: "POST",
+    });
+
+    //  클라이언트 ws도 닫아주면 UX가 깔끔.
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    setIsRunning(false);
   };
 
   return (
@@ -59,8 +99,9 @@ export default function Home() {
       />
 
       <div style={{ marginTop: 10 }}>
-        <button onClick={saveCode}>Save</button>
-        <button onClick={runCode} style={{ marginLeft: 10 }}>Run</button>
+        <button onClick={saveCode} disabled={isRunning}>Save</button>
+        <button onClick={runCode} disabled={isRunning} style={{ marginLeft: 10 }}>Run</button>
+        <button onClick={stopCode} disabled={!isRunning} style={{ marginLeft: 10 }}>Stop</button>
       </div>
 
       <pre

@@ -1,5 +1,4 @@
 import time
-
-for i in range(5):
-    print("Running step", i)
+for i in range(20):
+    print("Tick", i, flush=True)
     time.sleep(1)
