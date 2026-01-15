@@ -12,6 +12,7 @@ def stop_run():
     if not state.is_running or not state.container_name:
         return {"status": "idle"}
     
+    state.was_stopped = True
     stop_container(state.container_name)
     # WS 루프는 stdout 종료/에러로 빠져나오면서 finally에서 clear 됨
     return {"status": "stopping", "container": state.container_name}

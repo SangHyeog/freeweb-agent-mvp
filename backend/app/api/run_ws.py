@@ -5,6 +5,7 @@ from app.services.run_service import stop_container, start_docker_process_with_q
 from app.services.run_service import run_docker_and_strem_lines
 from app.services.run_service import run_docker_blocking
 from app.services.run_manager import run_manager
+from app.services.history_service import create_run, append_output, finish_run
 
 router = APIRouter()
 
@@ -132,6 +133,7 @@ async def run_ws(ws:WebSocket):
 async def run_ws(ws:WebSocket):
     await ws.accept()
 
+    # runnig check
     if run_manager.get_state().is_running:
         await ws.send_text("[BUSY] A run is already in progress.\n")
         await ws.close()
@@ -140,6 +142,9 @@ async def run_ws(ws:WebSocket):
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[str | None] = asyncio.Queue()
 
+    # 실행 시작 -> run_id 생성
+    run_id = create_run()
+
     def on_line(line: str):
         loop.call_soon_threadsafe(queue.put_nowait, line)
 
@@ -147,24 +152,38 @@ async def run_ws(ws:WebSocket):
         try:
             run_docker_blocking(on_line)
         finally:
-            loop.call_soon_threadsafe(queue.put_nowait, None)  # 종료 신호
+            loop.call_soon_threadsafe(queue.put_nowait, None)  # stdout 종료 신호
 
     try:
         run_manager.try_start("running", -1)
+        await ws.send_text(f"[RUN_ID] {run_id}\n")
 
+        # docker 실횅을 Thread로
         task = asyncio.create_task(asyncio.to_thread(blocking_runner))
 
         while True:
             item = await queue.get()
             if item is None:
                 break
+            append_output(run_id, item)
             await ws.send_text(item)
 
+        # 정상 종료
+        status = "stopped" if run_manager.get_state().was_stopped else "done"
+        finish_run(run_id, status)
         await ws.send_text("[DONE]\n")
 
     except WebSocketDisconnect:
-        # 프론트에서 ws.close() 했을 때
-        pass
+        # 프론트에서 ws.close() 했을 때 (WS가 끊긴 경우 (브라우저 닫힘, 강제 close))
+        finish_run(run_id, "disconnected")
+    
+    except Exception as e:
+        # 실행 중 예외
+        finish_run(run_id, "error")
+        try:
+            await ws.send_text(f"[ERROR] {str(e)}\n")
+        except Exception:
+            pass
 
     finally:
         run_manager.stop_and_clear()

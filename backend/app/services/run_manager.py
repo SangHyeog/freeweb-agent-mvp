@@ -7,7 +7,7 @@ class RunState:
     is_running: bool = False
     container_name: Optional[str] = None
     process_pid: Optional[str] = None
-
+    was_stopped = False
 
 class RunManager:
     """
@@ -18,6 +18,7 @@ class RunManager:
     def __init__(self):
         self._lock = threading.Lock()
         self._state = RunState()
+        self._state.was_stopped = False
 
     def try_start(self, container_name: str, pid: int) -> bool:
         with self._lock:
