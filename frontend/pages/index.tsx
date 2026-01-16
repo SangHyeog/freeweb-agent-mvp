@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 
 import OutputPanel from "../components/OutputPanel";
@@ -26,6 +26,13 @@ export default function Home() {
   const [output, setOutput] = useState("");
   const [autoScroll, setAutoScroll] = useState(true);
 
+  // editor state
+  const [editorHeight, setEditorHeight] = useState<number>(300);    // px
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const isDraggingRef = useRef(false);
+  const dragStartYRef = useRef<number>(0);
+  const dragStartHeightRef = useRef<number>(0);
+
   // init
   useEffect(() => {
     (async () => {
@@ -47,6 +54,39 @@ export default function Home() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  // mousemove / mouseup event
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+        if (!isDraggingRef.current || !containerRef.current) 
+            return;
+
+        const rect = containerRef.current.getBoundingClientRect();
+        const delta = e.clientY - dragStartYRef.current;
+        const next = dragStartHeightRef.current + delta;
+
+        const min = 120;
+        const max = rect.height - 120;
+
+        setEditorHeight(Math.min(Math.max(next, min), max));
+    };
+
+    const onMouseUp = () => {
+        if (!isDraggingRef.current)
+            return;
+
+        isDraggingRef.current = false;
+        document.body.style.cursor = "";
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+
+    return () => {
+        window.removeEventListener("mousemove", onMouseMove);
+        window.removeEventListener("mouseup", onMouseUp);
+    };
   }, []);
 
   const onRun = () => {
@@ -132,7 +172,7 @@ export default function Home() {
       </div>
 
       {/* Right */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div ref={containerRef} style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <Tabs
           tabs={files.tabs}
           selectedPath={files.selectedPath}
@@ -161,7 +201,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div style={{ flex: 1, minHeight: 0 }}>
+        <div style={{ height: editorHeight, minHeight: 120, overflow: "hidden", }}>
           <Editor
             height="100%"
             language={guessLanguage(files.selectedPath)}
@@ -169,6 +209,36 @@ export default function Home() {
             onChange={(v) => files.updateCode(v || "")}
           />
         </div>
+
+        <div
+            style={{
+              height: 6,
+              cursor: "row-resize",
+              background: "#e0e0e0",
+              flexShrink: 0,
+            }}
+            onMouseEnter={(e) => {
+                e.currentTarget.style.background = "#c0c0c0";
+            }}
+            onMouseLeave={(e) => {
+                e.currentTarget.style.background = "#e0e0e0";
+            }}
+            onMouseDown={(e) => {
+              e.preventDefault();
+
+              isDraggingRef.current = true;
+              dragStartYRef.current = e.clientY;
+              dragStartHeightRef.current = editorHeight;
+
+              document.body.style.cursor = "row-resize";
+            }}
+            onDoubleClick={() => {
+              // 50:50 리셋
+              if (!containerRef.current) return;
+              const total = containerRef.current.clientHeight;
+              setEditorHeight(Math.floor(total / 2));
+            }}
+        />
 
         <div style={{ flex: 1, minHeight: 0 }}>
           <OutputPanel output={output} autoScroll={autoScroll} setAutoScroll={setAutoScroll} setOutput={setOutput} />
