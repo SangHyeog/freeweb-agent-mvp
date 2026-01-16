@@ -57,3 +57,20 @@ def delete_path(path: str) -> None:
         raise ValueError("Directory delete not allowed in MVP")
     p.unlink()
 
+def rename_path(old_path: str, new_path: str) -> None:
+    old_p = safe_join(old_path)
+    new_p = safe_join(new_path)
+
+    if not old_p.exists():
+        raise FileNotFoundError("Soure not found")
+    
+    if old_p.is_dir():
+        # MVP에선 dir rename 금지(나중에 지원)
+        raise ValueError("Directory rename not allowed in MVP")
+    
+    if new_p.exists():
+        raise ValueError("Target already exists")
+    
+    new_p.parent.mkdir(parents=True, exist_ok=True)
+    old_p.rename(new_p)
+    

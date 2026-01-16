@@ -1,8 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 
+/* =========================
+   Config
+========================= */
 const API_BASE = "http://localhost:8000";
 
+/* =========================
+   Types
+========================= */
 type FileItem = { path: string, type: "file" | "dir" };
 type TreeNode =  
     | { type: "dir"; name: string; path: string; children: TreeNode[] } 
@@ -17,7 +23,9 @@ type RunHistoryItem = {
     preview: string,
 };
 
-
+/* =========================
+   Utils
+========================= */
 function guessLanguage(path: string) {
     if (path.endsWith(".py")) return "python";
     if (path.endsWith(".ts") || path.endsWith(".tsx")) return "typescript";
@@ -43,7 +51,7 @@ function buildTree(items: FileItem[]): TreeNode {
             parent.children.push(node);
         }
         return node;
-    }
+    };
 
     for (const it of items) {
         const parts = it.path.split("/").filter(Boolean);
@@ -74,6 +82,9 @@ function buildTree(items: FileItem[]): TreeNode {
 }
 
 
+/* =========================
+   Component
+========================= */
 export default function Home() {
     const [items, setItems] = useState<FileItem[]>([]);
     const [selectedPath, setSelectedPath] = useState<string>("main.py");
@@ -85,58 +96,19 @@ export default function Home() {
     const [tabs, setTabs] = useState<Tab[]>([]);
     const [history, setHistory] = useState<RunHistoryItem[]>([]);
     const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+    const [quickOpen, setQuickOpen] = useState(false);
+    const [query, setQuery] = useState("");
+    const [autoScroll, setAutoScroll] = useState(true);
+    const outputRef = useRef<HTMLPreElement | null>(null);
 
-    //  history
+
+    /* ---------- api ---------- */
     const refreshHistory = async () => {
         const res = await fetch(`${API_BASE}/history?limit=30`);
         const data = await res.json();
         setHistory(data.items || []);
     };
 
-    //  Tree
-    const tree = buildTree(items);
-
-    const renderNode = (node: TreeNode, depth: number = 0) => {
-        const pad = 8 + depth * 12;
-
-        if (node.type === "dir") {
-            const isOpen = expanded[node.path] ?? false;
-            return (
-                <div key={node.path}>
-                    {node.path !== "" && (
-                        <div
-                            style={{ padding: "4px 6px", marginLeft: pad, cursor: "pointer", fontWeight: 700 }}
-                            onClick={() => setExpanded((p) => ({...p, [node.path]: !isOpen }))}
-                        >
-                            {isOpen ? "▾" : "▸"} {node.name}
-                        </div>
-                    )}
-                    {(node.path === "" || isOpen) && node.children.map((c) => renderNode(c, node.path === "" ? depth: depth + 1))} 
-                </div>
-            );
-        }
-
-        //  file
-        const isActive = node.path === selectedPath;
-        return (
-            <div
-                key = {node.path}
-                onClick={() => openFile(node.path)}
-                style={{
-                    padding: "4px 6px",
-                    marginLeft: pad,
-                    cursor: "pointer",
-                    background: isActive ? "#eef" : "transparent",
-                    borderRadius: 6,
-                }}
-                title={node.path}
-            >
-                {node.name}
-            </div>
-        );
-    };
-
-    //  File
     const refreshFiles = async () => {
         const res = await fetch(`${API_BASE}/files`);
         const data = await res.json();
@@ -201,6 +173,73 @@ export default function Home() {
         await openFile(path);
     };
 
+    const closeTab = async (path: string) => {
+        const tab = tabs.find((t) => t.path === path);
+        if (!tab) return;
+
+        if (tab.isDirty) {
+            const choice = prompt(
+                `File has unsaved changes:\n${path}\n\nType:\n  s = Save\n  d = Discard\n   c = Cancel`,
+                "c"
+            );
+            if (!choice || choice.toLowerCase() === "c") return;
+
+            if(choice.toLocaleLowerCase() === "s") {
+                //  저장 후 닫기
+                await fetch(`${API_BASE}/files/write`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json"},
+                    body: JSON.stringify({ path, content: tab.content }),
+                });
+            }
+
+            //  d(버림) 또는 s(저장) 이후 공통 : 닫기 진행
+        }
+
+        setTabs((prev) => prev.filter((t) => t.path !== path));
+
+        //  닫는 탭이 현채 선택 탭이면 다른 탭으로 이동
+        if (selectedPath === path) {
+            const remaining = tabs.filter((t) => t.path !== path);
+            if (remaining.length > 0) {
+                const next = remaining[remaining.length - 1];
+                setSelectedPath(next.path);
+                setCode(next.content);
+            } else {
+                //  탭이 다 닫히면 main.py 다시 열기
+                await openFile("main.py");
+            }
+        }
+    };
+
+    const renameFile = async (oldPath: string) => {
+        const newPath = prompt("Rename to:", oldPath);
+        if (!newPath || newPath === oldPath) return;
+
+        const res = await fetch(`${API_BASE}/files/rename`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json"},
+            body: JSON.stringify({ old_path: oldPath, new_path: newPath }),
+        });
+
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            alert(err.detail || "Rename failed");
+            return;
+        }
+
+        //  열려있는 탭 경로도 갱신
+        setTabs((prev) =>
+            prev.map((t) => (t.path === oldPath ? { ...t, path: newPath }: t))
+        );
+
+        if (selectedPath === oldPath) {
+            setSelectedPath(newPath);
+        }
+
+        await refreshFiles();
+    };
+
     const deleteFile = async (path: string) => {
         if (!confirm(`Delete ${path}?`)) return;
         const res = await fetch(`${API_BASE}/files/delete`, {
@@ -220,6 +259,7 @@ export default function Home() {
         }
     };
 
+    /* ---------- run ---------- */
     const runCode = () => {
         if (isRunning) return;
 
@@ -258,6 +298,7 @@ export default function Home() {
         setIsRunning(false);
     };
 
+    /* ---------- effects ---------- */
     useEffect(() => {
         //  최초 로딩: 파일 목록 + main.py 오픈
         (async () => {
@@ -267,8 +308,97 @@ export default function Home() {
         })();
     }, []);
 
-    const filesOnly = items.filter((x) => x.type === "file");
+    useEffect(() => {
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.ctrlKey && e.key.toLocaleLowerCase() === "p") {
+                e.preventDefault();
+                setQuickOpen(true);
+                setQuery("");
+            }
+            if (e.key === "Escape") {
+                setQuickOpen(false);
+            }
+        };
+        
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, []);
 
+    useEffect(() => {
+        if (!autoScroll) return;
+
+        const el = outputRef.current;
+        if (!el) return;
+
+        el.scrollTop = el.scrollHeight;
+    }, [output, autoScroll]);
+
+    function scrollToTop() {
+        const el = outputRef.current;
+        if (!el) return;
+        el.scrollTop = 0;
+    }
+
+    /* ---------- render helpers ---------- */
+    const filesOnly = items.filter((x) => x.type === "file");
+    const tree = buildTree(items);
+    const allFiles = items.filter((x) => x.type === "file").map((x) => x.path);
+    const filtered = allFiles.filter((p) => p.toLocaleLowerCase().includes(query.toLocaleLowerCase())).slice(0, 20);
+
+    const renderNode = (node: TreeNode, depth: number = 0) => {
+        const pad = 8 + depth * 12;
+
+        if (node.type === "dir") {
+            const isOpen = expanded[node.path] ?? false;
+            return (
+                <div key={node.path}>
+                    {node.path !== "" && (
+                        <div
+                            style={{ padding: "4px 6px", marginLeft: pad, cursor: "pointer", fontWeight: 700 }}
+                            onClick={() => setExpanded((p) => ({...p, [node.path]: !isOpen }))}
+                        >
+                            {isOpen ? "▾" : "▸"} {node.name}
+                        </div>
+                    )}
+                    {(node.path === "" || isOpen) && node.children.map((c) => renderNode(c, node.path === "" ? depth: depth + 1))} 
+                </div>
+            );
+        }
+
+        //  file
+        if (node.type === "file") {
+            const isActive = node.path === selectedPath;
+            return (
+                <div
+                    key = {node.path}
+                    style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "4px 6px",
+                        marginLeft: pad,
+                        cursor: "pointer",
+                        background: isActive ? "#eef" : "transparent",
+                        borderRadius: 6,
+                    }}
+                    title={node.path}
+                >
+                    <div
+                        style={{ flex:1, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                        onClick={() => openFile(node.path)}
+                    >
+                        {node.name}
+                    </div>
+                    
+                    <button onClick={(e) => { e.stopPropagation(); renameFile(node.path) }} disabled={isRunning}>
+                        R
+                    </button>
+                </div>
+            );
+        }
+    };
+
+    /* ---------- JSX ---------- */
     return (
         <div style={{ height: "100vh", display: "flex", fontFamily: "sans-serif" }}>
             {/* Left: File Explorer */}
@@ -324,6 +454,7 @@ export default function Home() {
                                     const res = await fetch(`${API_BASE}/history/${h.id}`);
                                     const data = await res.json();
                                     setOutput(data.output || "");
+                                    scrollToTop();
                                 }}
                                 style={{
                                     padding: 8,
@@ -362,21 +493,37 @@ export default function Home() {
                             return (
                                 <div
                                     key={t.path}
-                                    onClick={() => {
-                                    setSelectedPath(t.path);
-                                    setCode(t.content);
-                                    }}
                                     style={{
-                                    padding: "6px 10px",
-                                    borderRadius: 8,
-                                    cursor: "pointer",
-                                    background: active ? "#eef" : "#f6f6f6",
-                                    border: "1px solid #ddd",
-                                    whiteSpace: "nowrap",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 8,
+                                        padding: "6px 10px",
+                                        borderRadius: 8,
+                                        cursor: "pointer",
+                                        background: active ? "#eef" : "#f6f6f6",
+                                        border: "1px solid #ddd",
+                                        whiteSpace: "nowrap",
                                     }}
                                     title={t.path}
+                                    onClick={() => {
+                                        setSelectedPath(t.path);
+                                        setCode(t.content);
+                                    }}
                                 >
-                                    {t.path} {t.isDirty ? "●" : ""}
+                                    <span>
+                                        {t.path} {t.isDirty ? "●" : ""}
+                                    </span>
+                                    
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            closeTab(t.path);
+                                        }}
+                                        style={{ marginLeft: 4 }}
+                                        disabled={isRunning}
+                                    >
+                                        x
+                                    </button>
                                 </div>
                             );
                         })}
@@ -399,10 +546,70 @@ export default function Home() {
                     />
                 </div>
 
-                <pre style={{ flex: 1, margin: 0, padding: 12, borderTop: "1px solid #ddd", overflow: "auto" }}>
-                {output}
+                <div style={{ padding: "8px 12px", borderTop: "1px solid #ddd", display: "flex", gap: 8 }}>
+                    <button onClick={() => { setOutput(""); scrollToTop(); }} disabled={isRunning}>Clear</button>
+                    <button
+                        onClick={async () => {
+                            await navigator.clipboard.writeText(output);
+                            alert("Copied!");
+                        }}
+                    >
+                        Copy
+                    </button>
+                    <label style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+                        <input type="checkbox" checked={autoScroll} onChange={(e) => setAutoScroll(e.target.checked)} />
+                        Auto-scroll
+                    </label>
+                </div>
+
+                <pre ref={outputRef} style={{ flex: 1, margin: 0, padding: 12, borderTop: "1px solid #ddd", overflow: "auto" }}>
+                  {output}
                 </pre>
             </div>
+
+            {quickOpen && (
+                <div
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        background: "rgba(0,0,0,0.3)",
+                        display: "flex",
+                        alignItems: "flex-start",
+                        justifyContent: "center",
+                        paddingTop: 80,
+                    }}
+                    onClick={() => setQuickOpen(false)}
+                >
+                    <div
+                        style={{ width: 600, background: "white", borderRadius: 12, padding: 12 }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div style={{ fontWeight: 700, marginBottom: 8 }}>Quick Open (Ctrl+P)</div>
+                        <input
+                            autoFocus
+                            value={query}
+                            onChange={(e) => setQuery(e.target.value)}
+                            placeholder="Type to search..."
+                            style={{ width: "100%", padding: 10, border: "1px solid #ddd", borderRadius: 8 }}
+                        />
+                        <div style={{ marginTop: 10, maxHeight: 320, overflowY: "auto" }}>
+                            {filtered.map((p) => (
+                            <div
+                                key={p}
+                                style={{ padding: 8, cursor: "pointer", borderBottom: "1px solid #eee" }}
+                                onClick={async () => {
+                                await openFile(p);
+                                setQuickOpen(false);
+                                }}
+                            >
+                                {p}
+                            </div>
+                            ))}
+                            {filtered.length === 0 && <div style={{ padding: 8, opacity: 0.7 }}>No matches</div>}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
