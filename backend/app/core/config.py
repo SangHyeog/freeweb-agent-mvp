@@ -11,3 +11,6 @@ DEFAULT_PROJECT = PROJECTS_DIR / "default"
 
 # 기본 실행 파일
 MAIN_FILE = DEFAULT_PROJECT / "main.py"
+
+# 타임아웃 상수 정의
+MAX_RUN_SECONDES = 30

@@ -1,11 +1,12 @@
 import os
+import time
 import subprocess
 import uuid
 import threading
 import queue
 from typing import Generator
 from app.core.config import MAIN_FILE
-from app.core.config import DEFAULT_PROJECT
+from app.core.config import DEFAULT_PROJECT, MAX_RUN_SECONDES
 
 def run_main_file() -> str:
     """
@@ -147,7 +148,31 @@ def run_docker_blocking(on_line):
     project_path = os.path.abspath(str(DEFAULT_PROJECT))
     container_name = f"freeweb-sbx-{uuid.uuid4().hex[:8]}"
 
-    cmd = ["docker", "run", "--rm", "--name", container_name, "-v", f"{project_path}:/app", "-w", "/app", "python:3.11-slim", "python", "main.py"]
+    #cmd = ["docker", "run", "--rm", "--name", container_name, "-v", f"{project_path}:/app", "-w", "/app", "python:3.11-slim", "python", "main.py"]
+    cmd = [
+        "docker", "run", "--rm",
+        "--name", container_name,
+        
+        # 리소스 제한
+        "--cpus=0.5",
+        "--memory=256m",
+        "--pids-limit=64",
+
+        # 보안 옵션
+        "--network=none",
+        "--read-only",
+        "--security-opt", "no-new-privileges",
+
+        # 파일 시스템
+        "-v", f"{project_path}:/app:ro",
+        "-w", "/app",
+        
+        "python:3.11-slim",
+        "python", "-u", "main.py",
+    ]
+
+    start = time.time()
+
     process = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -158,6 +183,10 @@ def run_docker_blocking(on_line):
 
     for line in iter(process.stdout.readline, ""):
         on_line(line)
+
+        if time.time() - start > MAX_RUN_SECONDES:
+            process.kill()
+            break
 
     process.stdout.close()
     process.wait()
