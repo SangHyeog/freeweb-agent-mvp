@@ -1,4 +1,8 @@
 import asyncio
+import threading
+import uuid
+
+from pathlib import Path
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.services.run_service import start_docker_process, stream_process_output
 from app.services.run_service import stop_container, start_docker_process_with_queue
@@ -8,6 +12,8 @@ from app.services.run_manager import run_manager
 from app.services.history_service import create_run, append_output, finish_run
 
 router = APIRouter()
+
+PROJECTS_ROOT = Path(__file__).resolve().parents[2] / "projects"
 
 """
 @router.websocket("/ws/run")
@@ -133,11 +139,19 @@ async def run_ws(ws:WebSocket):
 async def run_ws(ws:WebSocket):
     await ws.accept()
 
-    # runnig check
+    # --------------------------------------------------
+    # 실행 중복 방지 (Day 8)
+    # --------------------------------------------------
     if run_manager.get_state().is_running:
         await ws.send_text("[BUSY] A run is already in progress.\n")
         await ws.close()
         return
+    
+    # --------------------------------------------------
+    # 실행 컨텍스트 생성
+    # --------------------------------------------------
+    project_id = "default"  # MVP에서는 고정
+    project_path = PROJECTS_ROOT / project_id
     
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[str | None] = asyncio.Queue()
@@ -150,7 +164,9 @@ async def run_ws(ws:WebSocket):
 
     def blocking_runner():
         try:
-            run_docker_blocking(on_line)
+            run_docker_blocking(project_path=project_path, container_name=run_manager.get_state().container_name, on_line=on_line)
+        except Exception as e:
+            loop.call_soon_threadsafe(queue.put_nowait, f"[ERROR] {e}\n")
         finally:
             loop.call_soon_threadsafe(queue.put_nowait, None)  # stdout 종료 신호
 
