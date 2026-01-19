@@ -2,6 +2,10 @@ import threading
 from dataclasses import dataclass
 from typing import Optional
 
+from app.core.presets import DEFAULT_OPTIONS
+from app.core.run_options import RunOptions
+
+
 @dataclass
 class RunState:
     is_running: bool = False
@@ -19,6 +23,8 @@ class RunManager:
         self._lock = threading.Lock()
         self._state = RunState()
         self._state.was_stopped = False
+        self.options: RunOptions = DEFAULT_OPTIONS
+        self.stop_requested = False
 
     def try_start(self, container_name: str, pid: int) -> bool:
         with self._lock:
@@ -27,9 +33,14 @@ class RunManager:
             self._state.is_running = True
             self._state.container_name = container_name
             self._state.process_pid = pid
+            self.stop_requested = False
             return True
+        
+    def request_stop(self):
+        self.stop_requested = True
 
     def stop_and_clear(self):
+        self.stop_requested = True
         with self._lock:
             self._state = RunState()
 
@@ -41,6 +52,9 @@ class RunManager:
                 process_pid=self._state.process_pid,
             )
         
+    def set_options(self, opts: RunOptions):
+        self.options = opts
+                
 # 싱글톤(프로세스 내 1개)
 run_manager = RunManager()
     

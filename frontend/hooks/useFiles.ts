@@ -145,7 +145,7 @@ export function useFiles(API_BASE: string) {
 
     const deleteFile = useCallback(async (path: string) => {
         const res = await fetch(`${API_BASE}/files/delete`, {
-            method: "PSOT",
+            method: "POST",
             headers: { "Content-Type": "application/json"},
             body: JSON.stringify({ path }),
         });
@@ -153,8 +153,27 @@ export function useFiles(API_BASE: string) {
         if (!res.ok) 
             throw new Error("Delete failed");
 
+        //  삭제된 파일이 열려 있던 탭이면 제거
+        setTabs((prev) => prev.filter((t) => t.path !== path));
+
+        //  현재 선택된 파일이면 다른 파일로 이동
+        setSelectedPath((prev) => {
+            if (prev !== path) return prev;
+
+            //  다른 탭이 있으면 그쪽으로
+            const remaining = tabs.filter((t) => t.path !== path);
+            if (remaining.length > 0) {
+                setCode(remaining[remaining.length - 1].content);
+                return remaining[remaining.length - 1].path;
+            }
+
+            //  아무 탭도 없으면 기본 파일로
+            setCode("");
+            return "";
+        });
+
         await refreshFiles();
-    }, [API_BASE, refreshFiles]);
+    }, [API_BASE, refreshFiles, tabs]);
 
     const renameFile = useCallback(async (oldPath: string, newPath: string) => {
         const res = await fetch(`${API_BASE}/files/rename`, {

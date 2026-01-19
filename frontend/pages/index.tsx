@@ -9,14 +9,19 @@ import QuickOpen from "../components/QuickOpen";
 import { useFiles, guessLanguage } from "../hooks/useFiles";
 import { useRun } from "../hooks/useRun";
 import { useHistory } from "../hooks/useHistory";
+import { useRunSpec } from "../hooks/useRunSpec";
+import { useRunPresets } from "../hooks/useRunPresets";
 
-const API_BASE = "http://localhost:8000";
 
 export default function Home() {
+  const API_BASE = "http://localhost:8000";
+
   // hooks
   const files = useFiles(API_BASE);
   const run = useRun(API_BASE);
   const hist = useHistory(API_BASE);
+  const runSpec = useRunSpec(API_BASE);
+  const presets = useRunPresets(API_BASE);
 
   // quick open
   const [quickOpen, setQuickOpen] = useState(false);
@@ -32,6 +37,7 @@ export default function Home() {
   const isDraggingRef = useRef(false);
   const dragStartYRef = useRef<number>(0);
   const dragStartHeightRef = useRef<number>(0);
+
 
   // init
   useEffect(() => {
@@ -103,7 +109,8 @@ export default function Home() {
 
   const onSave = async () => {
     await files.saveCurrent();
-    await files.refreshFiles();
+    await files.refreshFiles();     //  UI 상태 갱신
+    runSpec.refresh();              //  실행 규칙 재 감지
   };
 
   return (
@@ -116,6 +123,7 @@ export default function Home() {
               const p = prompt("New file path (e.g. lib/helper.py):");
               if (!p) return;
               await files.createFile(p);
+              runSpec.refresh();
             }}
             disabled={run.isRunning}
           >
@@ -140,8 +148,17 @@ export default function Home() {
             const next = prompt("Rename to:", path);
             if (!next || next === path) return;
             await files.renameFile(path, next);
+            runSpec.refresh();
           }}
           disabled={run.isRunning}
+          onDeleteFile={async (path) => {
+            const ok = confirm(`Delete file?\n\n${path}`);
+            if (!ok)
+                return;
+            await files.deleteFile(path);
+            await files.refreshFiles();
+            runSpec.refresh();
+          }}
         />
 
         <div style={{ marginTop: 14, fontWeight: 800 }}>Run History</div>
@@ -188,7 +205,7 @@ export default function Home() {
 
         <div style={{ padding: 12, borderBottom: "1px solid #ddd", display: "flex", gap: 8 }}>
           <div style={{ fontWeight: 800 }}>{files.selectedPath}</div>
-          <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          <div style={{ /*marginLeft: "auto",*/ display: "flex", alignItems: "center", gap: 8 }}>
             <button onClick={onSave} disabled={run.isRunning}>
               Save
             </button>
@@ -198,6 +215,80 @@ export default function Home() {
             <button onClick={onStop} disabled={!run.isRunning}>
               Stop
             </button>
+
+            {runSpec.loading && (
+              <span style={{ fontSize: 12, opacity: 0.7 }}>Detecting...</span>
+            )}
+
+            {runSpec.spec && (
+              <span style={{ fontSize: 12, padding: "2px 8px", borderRadius: 12, background: "#eef", border: "1px solid #ccd",}}
+                title={`Entry: ${runSpec.spec.entry}\nImage: ${runSpec.spec.image}`}
+              >
+                Detected: {runSpec.spec.lang}
+                {runSpec.spec.source === "run.json" && " (custom)"}
+              </span>
+            )}
+
+            {runSpec.error && (
+              <span style={{ fontSize: 12, color: "red" }}>
+                Run spec error: {runSpec.error}
+              </span>
+            )}
+
+            {presets.current && presets.choices && (
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <label style={{ fontSize: 12 }}>
+                        Timeout
+                        <select
+                            value={presets.current.timeout_s}
+                            onChange={async (e) => {
+                                const next = { ...presets.current!, timeout_s: Number(e.target.value) };
+                                await presets.update(next);
+                                runSpec.refresh(); // ✅ spec 갱신
+                            }}
+                            disabled={run.isRunning}
+                        >
+                            {presets.choices.timeout_s.map((v) => (
+                                <option key={v} value={v}>{v}s</option>
+                            ))}
+                        </select>
+                    </label>
+
+                    <label style={{ fontSize: 12 }}>
+                        Memory
+                        <select
+                            value={presets.current.memory_mb}
+                            onChange={async (e) => {
+                                const next = { ...presets.current!, memory_mb: Number(e.target.value) };
+                                await presets.update(next);
+                                runSpec.refresh();
+                            }}
+                            disabled={run.isRunning}
+                        >
+                            {presets.choices.memory_mb.map((v) => (
+                                <option key={v} value={v}>{v}MB</option>
+                            ))}
+                        </select>
+                    </label>
+
+                    <label style={{ fontSize: 12 }}>
+                    Lang
+                    <select
+                        value={presets.current.lang}
+                        onChange={async (e) => {
+                            const next = { ...presets.current!, lang: e.target.value };
+                            await presets.update(next);
+                            runSpec.refresh();
+                        }}
+                        disabled={run.isRunning}
+                    >
+                        {presets.choices.lang.map((v) => (
+                            <option key={v} value={v}>{v}</option>
+                        ))}
+                    </select>
+                    </label>
+                </div>
+                )}
           </div>
         </div>
 

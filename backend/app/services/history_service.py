@@ -29,6 +29,10 @@ def create_run() -> str:
         "started_at": now,
         "ended_at": None,
         "status": "running",
+        "exit_code":None,
+        "signal":None,
+        "reason": None,
+        "duration_ms": None, 
         "output": "",
     })
     _save(items)
@@ -42,15 +46,26 @@ def append_output(run_id: str, chunk: str) -> None:
             _save(items)
             return
         
-def finish_run(run_id: str, status: str) -> None:
+def finish_run(run_id: str, status: str, exit_code=None, signal=None, reason="", duration_ms=0) -> None:
     items = _load()
     now = int(time.time() * 1000)
+
     for it in items:
         if it["id"] == run_id:
             it["status"] = status
             it["ended_at"] = now
-            _save(items)
-            return
+            it["exit_code"] = exit_code
+            it["signal"] = signal
+            it["reason"] = reason
+            it["duration_ms"] = duration_ms
+            
+            # preview는 output의 마지막 일부
+            out = it.get("output", "")
+            it["preview"] = out[-200:] if out else ""
+            break
+
+    _save(items)
+    return
         
 def list_runs(limit: int = 30) -> List[Dict]:
     items = _load()

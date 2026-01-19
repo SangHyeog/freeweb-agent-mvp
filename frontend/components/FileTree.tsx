@@ -8,6 +8,7 @@ type Props = {
   onOpenFile: (path: string) => void;
   onRenameFile: (path: string) => void;
   disabled?: boolean;
+  onDeleteFile: (path: string) => void;
 };
 
 export default function FileTree({
@@ -18,6 +19,7 @@ export default function FileTree({
   onOpenFile,
   onRenameFile,
   disabled,
+  onDeleteFile,
 }: Props) {
   const renderNode = (node: TreeNode, depth: number = 0) => {
     const pad = 8 + depth * 12;
@@ -75,6 +77,15 @@ export default function FileTree({
           disabled={disabled}
         >
           R
+        </button>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDeleteFile(node.path);
+          }}
+          disabled={disabled}
+        >
+          D
         </button>
       </div>
     );

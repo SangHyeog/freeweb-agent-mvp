@@ -7,7 +7,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.services.run_service import start_docker_process, stream_process_output
 from app.services.run_service import stop_container, start_docker_process_with_queue
 from app.services.run_service import run_docker_and_strem_lines
-from app.services.run_service import run_docker_blocking
+from app.services.run_service import run_docker_blocking, RunResult
 from app.services.run_manager import run_manager
 from app.services.history_service import create_run, append_output, finish_run
 
@@ -156,6 +156,8 @@ async def run_ws(ws:WebSocket):
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[str | None] = asyncio.Queue()
 
+    result_holder = {"result": None}    # thread -> async 공유용
+
     # 실행 시작 -> run_id 생성
     run_id = create_run()
 
@@ -164,9 +166,21 @@ async def run_ws(ws:WebSocket):
 
     def blocking_runner():
         try:
-            run_docker_blocking(project_path=project_path, container_name=run_manager.get_state().container_name, on_line=on_line)
+            res = run_docker_blocking(
+                project_path=project_path, 
+                container_name=run_manager.get_state().container_name, 
+                on_line=on_line,
+            )
+            result_holder["result"] = res
         except Exception as e:
             loop.call_soon_threadsafe(queue.put_nowait, f"[ERROR] {e}\n")
+            result_holder["result"] = RunResult(
+                status="error",
+                exit_code=None,
+                signal=None,
+                reason=str(e),
+                duration_ms=0,
+            )
         finally:
             loop.call_soon_threadsafe(queue.put_nowait, None)  # stdout 종료 신호
 
@@ -184,25 +198,32 @@ async def run_ws(ws:WebSocket):
             append_output(run_id, item)
             await ws.send_text(item)
 
-        # 정상 종료
-        status = "stopped" if run_manager.get_state().was_stopped else "done"
-        finish_run(run_id, status)
-        await ws.send_text("[DONE]\n")
-
     except WebSocketDisconnect:
-        # 프론트에서 ws.close() 했을 때 (WS가 끊긴 경우 (브라우저 닫힘, 강제 close))
-        finish_run(run_id, "disconnected")
-    
-    except Exception as e:
-        # 실행 중 예외
-        finish_run(run_id, "error")
-        try:
-            await ws.send_text(f"[ERROR] {str(e)}\n")
-        except Exception:
-            pass
+        run_manager.request_stop()          # WS 끊기면 곧바로 stop
 
     finally:
+        res = result_holder["result"]
+
+        if res is None:
+            finish_run(
+                run_id,
+                "error",
+                exit_code=None,
+                signal=None,
+                reason="No result",
+                duration_ms=0,
+            )
+        else:
+            finish_run(
+                run_id,
+                res.status,
+                exit_code=res.exit_code,
+                signal=res.signal,
+                reason=res.reason,
+                duration_ms=res.duration_ms,
+            )
+
         run_manager.stop_and_clear()
-        # 이미 닫혀 있을 수 있으므로 보호
+
         if ws.application_state.name == "CONNECTED":
             await ws.close()

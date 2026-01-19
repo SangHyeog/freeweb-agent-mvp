@@ -7,6 +7,7 @@ from app.api.run_ws import router as run_ws_router
 from app.api.stop import router as stop_router
 from app.api.files import router as files_router
 from app.api.history import router as history_router
+from app.api.run_presets import router as run_presets_router
 
 app = FastAPI(title="Freeweb Agent MVP API")
 
@@ -26,6 +27,7 @@ app.include_router(run_ws_router)
 app.include_router(stop_router)
 app.include_router(files_router)
 app.include_router(history_router)
+app.include_router(run_presets_router)
 
 @app.get("/")
 def root():

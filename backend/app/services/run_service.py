@@ -4,11 +4,15 @@ import subprocess
 import uuid
 import threading
 import queue
-from typing import Generator
+from dataclasses import dataclass
+from typing import Generator, Optional
 from pathlib import Path
 from app.core.config import MAIN_FILE
 from app.core.config import DEFAULT_PROJECT, MAX_RUN_SECONDES
 from app.services.run_detect import detect_run_spec
+from app.services.run_manager import run_manager
+from app.core.run_status import RunStatus
+
 
 def run_main_file() -> str:
     """
@@ -193,9 +197,49 @@ def run_docker_blocking_old(on_line):
     process.stdout.close()
     process.wait()
 
+
+@dataclass(frozen=True)
+class RunResult:
+    status: RunStatus
+    exit_code: Optional[int]
+    signal: Optional[int]
+    reason: str
+    duration_ms: int
+    stopped: bool = False
+    timed_out: bool = False
+
+
+def _classify_exit(exit_code: int | None, timed_out: bool, stopped: bool) -> tuple[RunStatus, str, int | None]:
+    """
+    return: (status, reason, signal)
+    """
+    if stopped:
+        return ("stopped", "Stopped by user", None)
+    if timed_out:
+        return ("timeout", "Exceeded time limit", None)
+    if exit_code is None:
+        return ("error", "No exit code", None)
+    
+    # subprocess returncode:
+    # - positive: process exit code
+    # - negative: terminated by signal (unix)
+    if exit_code == 0:
+        return ("success", "Exited with code 0", None)
+    # OOM 추정: docker에서 SIGKILL로 죽으면 흔히 137(128+9)로 보임
+    if exit_code == 137:
+        return ("oom", "Killed (possivle OOM / SIGKILL)", 9)
+    
+    # 다른 대표적인 kill들 (환경에 따라 관측)
+    if exit_code in (143,):     # 128+15 (SIGTERM)
+        return ("stopped", "Terminated (SIGTERM)", 15)
+    
+    return ("error", f"Exited with code {exit_code}", None)
+
+
 # Day 15
-def run_docker_blocking(project_path: Path, container_name: str, on_line):
-    spec = detect_run_spec(project_path)
+def run_docker_blocking(project_path: Path, container_name: str, on_line) -> RunResult:
+    opts = run_manager.options
+    spec = detect_run_spec(project_path, lang_override=opts.lang)
 
     # (선택) 헤더 로그
     on_line(f"[LANG] {spec.lang}\n")
@@ -206,8 +250,8 @@ def run_docker_blocking(project_path: Path, container_name: str, on_line):
         "--name", container_name,
         
         # 리소스 제한
-        "--cpus=0.5",
-        "--memory=256m",
+        f"--cpus={opts.cpus}",
+        f"--memory={opts.memory_mb}m",
         "--pids-limit=64",
 
         # 보안 옵션
@@ -230,6 +274,10 @@ def run_docker_blocking(project_path: Path, container_name: str, on_line):
     ]
 
     start = time.time()
+    timeout_s = opts.timeout_s
+
+    timed_out = False
+    stopped = False
 
     process = subprocess.Popen(
         cmd,
@@ -241,16 +289,45 @@ def run_docker_blocking(project_path: Path, container_name: str, on_line):
 
     assert process.stdout is not None
 
-    for line in iter(process.stdout.readline, ""):
-        on_line(line)
+    try:
+        for line in iter(process.stdout.readline, ""):
+            on_line(line)
 
-        if MAX_RUN_SECONDES and (time.time() - start) > MAX_RUN_SECONDES:
-            on_line(f"\n[TIMEOUT] exceeded {MAX_RUN_SECONDES}s\n")
-            process.kill()
-            break
+            # Stop 플래그 폴링
+            if run_manager.stop_requested:
+                stopped = True
+                on_line("\n[STOP] requested\n")
+                process.kill()
+                break
 
-    process.stdout.close()
-    process.wait()
+            # Timeout
+            if timeout_s and (time.time() - start) > timeout_s:
+                timed_out = True
+                on_line(f"\n[TIMEOUT] exceeded {timeout_s}s\n")
+                process.kill()
+                break
+    finally:
+        try:
+            process.stdout.close()
+        except Exception:
+            pass
+        process.wait()
+
+    duration_ms = int((time.time() - start) * 1000)
+    exit_code = process.returncode
+
+    status, reason, sig = _classify_exit(exit_code, timed_out=timed_out, stopped=stopped)
+
+    return RunResult(
+        status=status,
+        exit_code=exit_code,
+        signal=sig,
+        reason=reason,
+        duration_ms=duration_ms,
+        stopped=stopped,
+        timed_out=timed_out,
+    )
+
 
 
 def stream_process_output(process: subprocess.Popen) -> Generator[str, None, None]:

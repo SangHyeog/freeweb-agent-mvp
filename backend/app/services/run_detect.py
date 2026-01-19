@@ -22,10 +22,10 @@ def _read_run_json(project_path: Path) -> dict | None:
         return None
     
 
-def detect_run_spec(project_path: Path) -> RunSpec:
+def detect_run_spec(project_path: Path, lang_override: str = "auto") -> RunSpec:
     """
     우선순위:
-    1) run.json 있으면 그것을 사용 (MVP: python/node/bash만 허용)
+    1) run.json 있으면 그것을 사용 (MVP: python/node/bash만 허용)하되, override가 auto가 아니면 override 우선
     2) main.py -> python
     3) main.js -> node
     4) main.sh -> bash
@@ -34,6 +34,9 @@ def detect_run_spec(project_path: Path) -> RunSpec:
     if cfg:
         lang = (cfg.get("lang") or "").lower().strip()
         entry = (cfg.get("entry") or "").strip()
+
+        if lang_override != "auto":
+            lang = lang_override
 
         if lang not in ("python", "node", "bash"):
             raise ValueError("run.json lang must be one of: python | node | bash")
@@ -50,11 +53,34 @@ def detect_run_spec(project_path: Path) -> RunSpec:
         return RunSpec(lang="bash", image="debian:bookworm-slim", cmd=["bash", entry], entry=entry)
 
     # Auto-detect
-    if (project_path / "main.py").exists():
+    if lang_override == "python":
+        if not (project_path / "main.py").exists():
+            raise FileNotFoundError("override python but main.py not found")
         return RunSpec(lang="python", image="python:3.11-slim", cmd=["python", "-u", "main.py"], entry="main.py")
-    if (project_path / "main.js").exists():
+    if lang_override == "node":
+        if not (project_path / "main.js").exists():
+            raise FileNotFoundError("override node but main.js not found")
         return RunSpec(lang="node", image="node:20-slim", cmd=["node", "main.js"], entry="main.js")
-    if (project_path / "main.sh").exists():
+    if lang_override == "bash":
+        if not (project_path / "main.sh").exists():
+            raise FileNotFoundError("override bash but main.sh not found")
         return RunSpec(lang="bash", image="debian:bookworm-slim", cmd=["bash", "main.sh"], entry="main.sh")
 
     raise FileNotFoundError("No entry found. Create main.py / main.js / main.sh (or run.json).")
+
+
+def get_run_spec_info(project_path: Path, lang_override: str = "auto") -> dict:
+    """
+    프론트에 보여주기 위한 안전한 run spec 정보
+    """
+    spec = detect_run_spec(project_path, lang_override=lang_override)
+
+    source = "run.json" if (project_path / "run.json").exists() else "auto"
+
+    return {
+        "lang": spec.lang,
+        "entry": spec.entry,
+        "image": spec.image,
+        "cmd": spec.cmd,
+        "source": source,
+    }
