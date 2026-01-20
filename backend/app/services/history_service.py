@@ -77,7 +77,12 @@ def list_runs(limit: int = 30) -> List[Dict]:
             "started_at": it["started_at"],
             "ended_at": it["ended_at"],
             "status": it["status"],
-            "preview": output[-200:] if output else "",     # output[-200:]은 끝에서 200글자만 가져온다.
+            "exit_code": it.get("exit_code"),
+            "signal": it.get("signal"),
+            "reason": it.get("reason"),
+            "duration_ms": it.get("duration_ms"),
+            "preview": it.get("preview", ""),
+            #"preview": output[-200:] if output else "",     # output[-200:]은 끝에서 200글자만 가져온다.
         })
     return out
 
