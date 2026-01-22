@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from app.core.presets import TIMEOUT_CHOICES, MEMORY_CHOICES_MB, CPU_CHOICES, LANG_CHOICES
 from app.core.run_options import RunOptions
@@ -15,7 +15,9 @@ class RunOptionsIn(BaseModel):
 
 
 @router.get("/presets")
-def get_presets():
+def get_presets(project_id: str = Query(...)):
+    opts = run_manager.get_options(project_id)
+
     return {
         "choices": {
             "timeout_s": TIMEOUT_CHOICES,
@@ -24,16 +26,16 @@ def get_presets():
             "lang": LANG_CHOICES,
         },
         "current": {
-            "timeout_s": run_manager.options.timeout_s,
-            "memory_mb": run_manager.options.memory_mb,
-            "cpus": run_manager.options.cpus,
-            "lang": run_manager.options.lang,
+            "timeout_s": opts.timeout_s,
+            "memory_mb": opts.memory_mb,
+            "cpus": opts.cpus,
+            "lang": opts.lang,
         },
     }
 
 
 @router.post("/presets")
-def set_presets(body: RunOptionsIn):
+def set_presets(body: RunOptionsIn, project_id: str = Query(...)):
     if body.timeout_s not in TIMEOUT_CHOICES:
         raise HTTPException(400, "Invalid timeout")
     if body.memory_mb not in MEMORY_CHOICES_MB:
@@ -43,7 +45,7 @@ def set_presets(body: RunOptionsIn):
     if body.lang not in LANG_CHOICES:
         raise HTTPException(400, "Invalid lang")
     
-    run_manager.set_options(RunOptions(
+    run_manager.set_options(project_id, RunOptions(
         timeout_s=body.timeout_s,
         memory_mb=body.memory_mb,
         cpus=body.cpus,

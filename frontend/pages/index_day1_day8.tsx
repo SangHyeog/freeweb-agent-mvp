@@ -11,7 +11,7 @@ export default function Home() {
 
   // 처음 페이지 로드 시 backend에서 코드 가져오기
   useEffect(() => {
-    fetch(`${API_BASE}/project`)
+    fetch(`${API_BASE}/projects`)
       .then((res) => res.json())
       .then((data) => setCode(data.content))
       .catch((err) => console.error("Failed to load project:", err));
@@ -19,7 +19,7 @@ export default function Home() {
 
   // 코드 저장
   const saveCode = async () => {
-    await fetch(`${API_BASE}/project`, {
+    await fetch(`${API_BASE}/projects`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content: code }),

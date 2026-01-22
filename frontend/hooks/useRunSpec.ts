@@ -10,7 +10,7 @@ export type RunSpecInfo = {
 };
 
 
-export function useRunSpec(API_BASE: string) {
+export function useRunSpec(API_BASE: string, projectId: string) {
     const [spec, setSpec] = useState<RunSpecInfo | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -19,7 +19,7 @@ export function useRunSpec(API_BASE: string) {
         setLoading(true);
         setError(null);
         try {
-            const res = await fetch(`${API_BASE}/run/spec`);
+            const res = await fetch(`${API_BASE}/run/spec?project_id=${encodeURIComponent(projectId)}`);
             if (!res.ok) throw new Error("Failed to load run spec");
             const data = await res.json();
             setSpec(data);
@@ -31,11 +31,11 @@ export function useRunSpec(API_BASE: string) {
         finally {
             setLoading(false);
         }
-    }, [API_BASE]);
+    }, [API_BASE, projectId]);
 
     useEffect(() => {
         refresh();
     }, [refresh]);
 
-    return { spec, loading, error, refresh };
+    return { projectId, spec, loading, error, refresh };
 }

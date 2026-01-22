@@ -19,17 +19,17 @@ class FileRename(BaseModel):
 
 
 @router.get("")
-def api_list_files():
+def api_list_files(project_id: str = Query(None)):
     try:
-        return {"items" : list_files()}
+        return {"items" : list_files(project_id)}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
     
 
 @router.get("/read")
-def api_read_file(path: str = Query(...)):
+def api_read_file(path: str = Query(...), project_id: str = Query(None)):
     try:
-        return {"content": read_file(path)}
+        return {"content": read_file(project_id, path)}
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Not found")
     except Exception as e:
@@ -37,36 +37,36 @@ def api_read_file(path: str = Query(...)):
     
 
 @router.post("/write")
-def api_write_file(data: FileWrite):
+def api_write_file(data: FileWrite, project_id: str = Query(None)):
     try:
-        write_file(data.path, data.content)
+        write_file(project_id, data.path, data.content)
         return {"status": "saved"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
     
 
 @router.post("/create")
-def api_create_file(data: FileCreate):
+def api_create_file(data: FileCreate, project_id: str = Query(None)):
     try:
-        create_file(data.path)
+        create_file(project_id, data.path)
         return {"status": "created"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
     
 
 @router.post("/delete")
-def api_delete_file(data: FileCreate):
+def api_delete_file(data: FileCreate, project_id: str = Query(None)):
     try:
-        delete_path(data.path)
+        delete_path(project_id, data.path)
         return {"status": "deleted"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
     
 
 @router.post("/rename")
-def api_rename_file(data: FileRename):
+def api_rename_file(data: FileRename, project_id: str = Query(None)):
     try:
-        rename_path(data.old_path, data.new_path)
+        rename_path(project_id, data.old_path, data.new_path)
         return {"status": "renamed"}
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Not found")

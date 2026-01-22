@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useEffect, useState } from "react";
 
 export type FileItem = { path: string, type: "file" | "dir" };
 export type Tab = { path: string, content: string; isDirty: boolean };
@@ -68,7 +68,7 @@ export function guessLanguage(path: string) {
 }
 
 
-export function useFiles(API_BASE: string) {
+export function useFiles(API_BASE: string, projectId: string) {
     const [items, setItems] = useState<FileItem[]>([]);
     const [tabs, setTabs] = useState<Tab[]>([]);
     const [selectedPath, setSelectedPath] = useState<string>("main.py");
@@ -77,13 +77,12 @@ export function useFiles(API_BASE: string) {
 
     const tree = useMemo(() => buildTree(items), [items]);
 
-
     /* ---------- api ---------- */
     const refreshFiles = useCallback(async () => {
-        const res = await fetch(`${API_BASE}/files`);
+        const res = await fetch(`${API_BASE}/files?project_id=${encodeURIComponent(projectId)}`);
         const data = await res.json();
         setItems(data.items || []);
-    }, [API_BASE]);
+    }, [API_BASE, projectId]);
 
     const openFile = useCallback(async (path: string) => {
         //  이미 탭이 있으면 전환만
@@ -94,7 +93,7 @@ export function useFiles(API_BASE: string) {
             return;
         }
 
-        const res = await fetch(`${API_BASE}/files/read?path=${encodeURIComponent(path)}`);
+        const res = await fetch(`${API_BASE}/files/read?project_id=${encodeURIComponent(projectId)}&path=${encodeURIComponent(path)}`);
         if (!res.ok) 
             throw new Error(`Failed to open: ${path}`);
             
@@ -104,7 +103,7 @@ export function useFiles(API_BASE: string) {
         setTabs((prev) => [...prev, { path, content, isDirty: false }]);    /* ...prev는 ["a", "b", "c"](이전 상태 값으로 갖고 있는 것) */
         setSelectedPath(path);
         setCode(content);
-    }, [API_BASE, tabs]);
+    }, [API_BASE, projectId, tabs]);
 
     const updateCode = useCallback((newCode: string) => {
         setCode(newCode);
@@ -117,7 +116,7 @@ export function useFiles(API_BASE: string) {
         const tab = tabs.find((t) => t.path === selectedPath);
         if (!tab) return;
 
-        const res = await fetch(`${API_BASE}/files/write`, {
+        const res = await fetch(`${API_BASE}/files/write?project_id=${encodeURIComponent(projectId)}`, {
             method: "POST",
             headers: { "Content-Type": "application/json"},
             body: JSON.stringify({ path: tab.path, content: tab.content }),
@@ -127,10 +126,10 @@ export function useFiles(API_BASE: string) {
             throw new Error("Save failed");
 
         setTabs((prev) => prev.map((t) => (t.path === selectedPath ? { ...t, isDirty: false} : t)));
-    }, [API_BASE, tabs, selectedPath]);
+    }, [API_BASE, projectId, tabs, selectedPath]);
 
     const createFile = useCallback(async (path: string) => {
-        const res = await fetch(`${API_BASE}/files/create`, {
+        const res = await fetch(`${API_BASE}/files/create?project_id=${encodeURIComponent(projectId)}`, {
             method: "POST",
             headers: { "Content-Type": "application/json"},
             body: JSON.stringify({ path }),
@@ -141,10 +140,10 @@ export function useFiles(API_BASE: string) {
 
         await refreshFiles();
         await openFile(path);
-    }, [API_BASE, refreshFiles, openFile]);
+    }, [API_BASE, projectId, refreshFiles, openFile]);
 
     const deleteFile = useCallback(async (path: string) => {
-        const res = await fetch(`${API_BASE}/files/delete`, {
+        const res = await fetch(`${API_BASE}/files/delete?project_id=${encodeURIComponent(projectId)}`, {
             method: "POST",
             headers: { "Content-Type": "application/json"},
             body: JSON.stringify({ path }),
@@ -173,10 +172,10 @@ export function useFiles(API_BASE: string) {
         });
 
         await refreshFiles();
-    }, [API_BASE, refreshFiles, tabs]);
+    }, [API_BASE, projectId, refreshFiles, tabs]);
 
     const renameFile = useCallback(async (oldPath: string, newPath: string) => {
-        const res = await fetch(`${API_BASE}/files/rename`, {
+        const res = await fetch(`${API_BASE}/files/rename?project_id=${encodeURIComponent(projectId)}`, {
             method: "POST",
             headers: { "Content-Type": "application/json"},
             body: JSON.stringify({ old_path: oldPath, new_path: newPath }),
@@ -194,7 +193,7 @@ export function useFiles(API_BASE: string) {
             setSelectedPath(newPath);
 
         await refreshFiles();
-    }, [API_BASE, refreshFiles, selectedPath]);
+    }, [API_BASE, projectId, refreshFiles, selectedPath]);
 
     const closeTab = useCallback(async (path: string) => {
         const tab = tabs.find((t) => t.path === path);
@@ -209,7 +208,7 @@ export function useFiles(API_BASE: string) {
 
             if(choice.toLocaleLowerCase() === "s") {
                 //  저장 후 닫기
-                const res = await fetch(`${API_BASE}/files/write`, {
+                const res = await fetch(`${API_BASE}/files/write?project_id=${encodeURIComponent(projectId)}`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json"},
                     body: JSON.stringify({ path, content: tab.content }),
@@ -234,7 +233,23 @@ export function useFiles(API_BASE: string) {
                 await openFile("main.py");
             }
         }
-    }, [API_BASE, tabs, selectedPath, openFile]);
+    }, [API_BASE, projectId, tabs, selectedPath, openFile]);
+
+    useEffect(() => {
+        if (!projectId) return;
+        refreshFiles();
+    }, [projectId, refreshFiles]);
+
+    useEffect(() => {
+        // 프로젝트 변경 시 상태 즉시 리셋
+        setItems([]);
+        setTabs([]);
+        setSelectedPath("");   // null ❌, string 타입이므로 ""
+        setCode("");
+        setExpanded({ "": true });
+
+        // ⚠️ 여기서 refreshFiles()는 호출하지 않는다
+    }, [projectId]);
 
     return {
         //  file list / tree

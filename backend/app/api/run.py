@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from app.services.run_service import (run_main_file, run_main_file_docker)
 
 from pathlib import Path
@@ -12,14 +12,20 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2] / "projects"
 
 
 @router.get("/spec")
-def get_run_spec():
-    project_id = "default"  # MVP
+def get_run_spec(project_id: str = Query(...)):
+    #project_id = "default"  # MVP
     project_path = PROJECT_ROOT / project_id
 
     if not project_path.exists():
         raise HTTPException(status_code=404, detail="Project not found")
     
-    return get_run_spec_info(project_path, lang_override=run_manager.options.lang)
+    try:
+        opts = run_manager.get_options(project_id)
+        return get_run_spec_info(project_path, lang_override=opts.lang)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=400, detail=str(e),)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e),)
 
 
 

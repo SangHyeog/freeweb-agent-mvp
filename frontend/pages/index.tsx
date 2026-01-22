@@ -5,7 +5,9 @@ import OutputPanel from "../components/OutputPanel";
 import Tabs from "../components/Tabs";
 import FileTree from "../components/FileTree";
 import QuickOpen from "../components/QuickOpen";
+import HistoryPanel from "../components/HistoryPanel";
 
+import { useProjects } from "../hooks/useProjects";
 import { useFiles, guessLanguage } from "../hooks/useFiles";
 import { useRun } from "../hooks/useRun";
 import { useHistory } from "../hooks/useHistory";
@@ -17,11 +19,15 @@ export default function Home() {
   const API_BASE = "http://localhost:8000";
 
   // hooks
-  const files = useFiles(API_BASE);
-  const run = useRun(API_BASE);
-  const hist = useHistory(API_BASE);
-  const runSpec = useRunSpec(API_BASE);
-  const presets = useRunPresets(API_BASE);
+  const projects = useProjects(API_BASE);
+  const projectId = projects.current;
+
+  const files = useFiles(API_BASE, projectId);
+  const run = useRun(API_BASE, projectId);
+  const hist = useHistory(API_BASE, projectId);
+  const runSpec = useRunSpec(API_BASE, projectId);
+  const presets = useRunPresets(API_BASE, projectId);
+  
 
   // quick open
   const [quickOpen, setQuickOpen] = useState(false);
@@ -42,9 +48,10 @@ export default function Home() {
   // init
   useEffect(() => {
     (async () => {
-      await files.refreshFiles();
-      await files.openFile("main.py");
-      //await hist.refreshHistory();
+      //await files.refreshFiles();
+      //await files.openFile("main.py");
+      await hist.refreshHistory();
+      await runSpec.refresh();
     })();
   }, []);
 
@@ -113,49 +120,43 @@ export default function Home() {
     runSpec.refresh();              //  실행 규칙 재 감지
   };
 
-  function badgeStyle(s: string): React.CSSProperties {
-    // 색 지정은 원하면 나중에 바꿔도 됨 (우선은 구분만 되게)
-    let bg = "#eee";
-    let border = "#ccc";
-    let color = "#333";
-
-    if (s === "success") { bg = "#e7f7ee"; border = "#bde5c8"; color = "#1f7a3a"; }
-    else if (s === "error") { bg = "#ffecec"; border = "#f5b5b5"; color = "#a40000"; }
-    else if (s === "timeout") { bg = "#fff4e5"; border = "#ffd199"; color = "#9a5b00"; }
-    else if (s === "oom") { bg = "#ffecec"; border = "#f5b5b5"; color = "#7a0000"; }
-    else if (s === "stopped") { bg = "#fff8db"; border = "#f1e0a0"; color = "#7a5a00"; }
-    else if (s === "disconnected") { bg = "#eef2ff"; border = "#c7d2fe"; color = "#3730a3"; }
-    else if (s === "running") { bg = "#e0f2fe"; border = "#bae6fd"; color = "#075985"; }
-
-    return {
-        padding: "2px 8px",
-        borderRadius: 999,
-        fontSize: 12,
-        background: bg,
-        border: `1px solid ${border}`,
-        color,
-        lineHeight: "18px",
-        whiteSpace: "nowrap",
-    };
-  }
-
-  function statusLabel(s: string) {
-    if (s === "success") return "OK";
-    if (s === "error") return "ERR";
-    if (s === "timeout") return "TIMEOUT";
-    if (s === "oom") return "OOM";
-    if (s === "stopped") return "STOP";
-    if (s === "disconnected") return "DISC";
-    if (s === "running") return "RUN";
-
-    return s.toUpperCase();
-  }
-
   return (
     <div style={{ height: "100%", display: "flex", fontFamily: "sans-serif" }}>
       {/* Left */}
-      <div style={{ width: 300, borderRight: "1px solid #ddd", padding: 12 }}>
-        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+      <div style={{ width: 350, borderRight: "1px solid #ddd", padding: 12 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <select value={projects.current} 
+            onChange={async (e) => {
+              const pid = e.target.value;
+              projects.setCurrent(pid);
+
+              setOutput("");
+            }} 
+            disabled={run.isRunning} style={{flex:1}}
+          >
+            {projects.projects.map((p) => (<option key={p} value={p}> {p} </option>))}
+          </select>
+          <button 
+            onClick={async () => {
+              const pid = prompt("New project id (e.g. hello-node):");
+              if (!pid) return;
+
+              const res = await fetch(`${API_BASE}/projects`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json"},
+                body: JSON.stringify({ project_id: pid }),
+              });
+              if (!res.ok) {
+                alert("Failed to create project");
+                return;
+              }
+              await projects.refresh();
+              projects.setCurrent(pid);
+            }}
+            disabled={run.isRunning}
+          >
+            New Project
+          </button>
           <button
             onClick={async () => {
               const p = prompt("New file path (e.g. lib/helper.py):");
@@ -200,64 +201,21 @@ export default function Home() {
         />
 
         <div style={{ marginTop: 14, fontWeight: 800 }}>Run History</div>
-        <div style={{ maxHeight: 240, overflowY: "auto", border: "1px solid #ddd", borderRadius: 10, marginTop: 8 }}>
-          {hist.history.map((item) => (
-            <div
-              key={item.id}
-              onClick={async () => {
-              // 기존에 history 클릭하면 output 로드하는 로직 유지
-              // 예: setOutput(item.output);
-              const header =
+          <HistoryPanel
+            key={projectId}
+            history={hist.history}
+            onSelect={async (item) => {
+              const header = 
                 `[ID] ${item.id}\n` +
-                `[STATUS] ${item.status}\n` +
+                `[STATUS] ${item.status}` +
                 `[DURATION] ${item.duration_ms?? "n/a"}ms\n` +
                 `[EXIT] ${item.exit_code?? "n/a"}\n` +
                 `[REASON] ${item.reason?? ""}\n\n`;
 
               const out = await hist.loadHistoryOutput(item.id);
               setOutput(header + (out || ""));
-              }}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "8px 10px",
-                borderBottom: "1px solid #eee",
-                cursor: "pointer",
-              }}
-            >
-            {/* ✅ 1) 상태 뱃지 */}
-              <span
-                style={badgeStyle(item.status)}
-                title={`${item.reason ?? ""} (exit=${item.exit_code ?? "n/a"})`}
-              >
-                {statusLabel(item.status)}
-              </span>
-
-            {/* ✅ 2) preview (넘치면 ... 처리) */}
-              <div
-                style={{
-                    flex: 1,
-                    minWidth: 0,
-                    fontSize: 12,
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                }}
-                    title={item.preview || ""}
-              >
-                {item.preview || "(no output)"}
-              </div>
-
-            {/* ✅ 3) (선택) duration 표시 */}
-            {typeof item.duration_ms === "number" && (
-                <div style={{ fontSize: 11, color: "#888", whiteSpace: "nowrap" }}>
-                    {Math.round(item.duration_ms / 1000)}s
-                </div>
-            )}
-            </div>
-          ))}
-        </div>
+            }}
+          />
       </div>
 
       {/* Right */}

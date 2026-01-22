@@ -15,45 +15,50 @@ class RunState:
 
 class RunManager:
     """
-    단일 프로젝트/단일 유저 MVP 기준:
-    - 동시에 1개 실행만 허용
     - 메모리(in-process)에 상태 저장
     """
     def __init__(self):
         self._lock = threading.Lock()
-        self._state = RunState()
-        self._state.was_stopped = False
-        self.options: RunOptions = DEFAULT_OPTIONS
-        self.stop_requested = False
+        self._states: dict[str, RunState] = {}
+        self._stop_requested: dict[str, bool] = {}
+        self._options: dict[str, RunOptions] = {}
 
-    def try_start(self, container_name: str, pid: int) -> bool:
+    def try_start(self, project_id: str, container_name: str, pid: int) -> bool:
         with self._lock:
-            if self._state.is_running:
+            state = self._states.get(project_id)
+            if state and state.is_running:
                 return False
-            self._state.is_running = True
-            self._state.container_name = container_name
-            self._state.process_pid = pid
-            self.stop_requested = False
+            
+            self._states[project_id] = RunState(
+                is_running=True,
+                container_name=container_name,
+                process_pid=pid,
+            )
+            self._stop_requested[project_id] = False
             return True
         
-    def request_stop(self):
-        self.stop_requested = True
+    def request_stop(self, project_id: str):
+        self._stop_requested[project_id] = True
 
-    def stop_and_clear(self):
-        self.stop_requested = True
+    def stop_and_clear(self, project_id: str):
         with self._lock:
-            self._state = RunState()
+            self._stop_requested[project_id] = False
+            self._states.pop(project_id, None)
 
-    def get_state(self) -> RunState:
+    def get_state(self, project_id: str) -> RunState:
         with self._lock:
-            return RunState(
-                is_running=self._state.is_running,
-                container_name=self._state.container_name,
-                process_pid=self._state.process_pid,
-            )
+            return self._states.get(project_id, RunState())
         
-    def set_options(self, opts: RunOptions):
-        self.options = opts
+    def set_options(self, project_id: str, opts: RunOptions):
+        with self._lock:
+            self._options[project_id] = opts
+
+    def get_options(self, project_id: str) -> RunOptions:
+        with self._lock:
+            return self._options.get(project_id, DEFAULT_OPTIONS)
+
+    def is_stop_requested(self, project_id: str) -> bool:
+        return self._stop_requested.get(project_id, False)
                 
 # 싱글톤(프로세스 내 1개)
 run_manager = RunManager()

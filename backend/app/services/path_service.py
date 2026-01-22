@@ -1,13 +1,11 @@
 from pathlib import Path
-from app.core.config import DEFAULT_PROJECT
 
 
-def safe_join(relative_path: str) -> Path:
+def safe_join(base: Path, relative_path: str) -> Path:
     """
-    DEFAULT_PROJECT 아래에서만 접근 허용.
-    ../ 같은 path traversal 방지.
+    base(project_root)아래에서만 접근 허용
     """
-    base = DEFAULT_PROJECT.resolve()
+    base = base.resolve()
     target = (base / relative_path).resolve()
 
     # target이 base 하위가 아니면 차단

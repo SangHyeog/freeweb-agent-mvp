@@ -15,134 +15,17 @@ router = APIRouter()
 
 PROJECTS_ROOT = Path(__file__).resolve().parents[2] / "projects"
 
-"""
-@router.websocket("/ws/run")
-async def run_ws(ws: WebSocket):
-    await ws.accept()
-
-    # 중복 실행 방지: 이미 실행 중이면 거부
-    state = run_manager.get_state()
-    if state.is_running:
-        await ws.send_text("[BUSY] A run is already in progress. Please stop it first.\n")
-        await ws.close()
-        return
-    
-    container_name = None
-    process = None
-
-    try:
-        container_name, process = start_docker_process()
-
-        # 실행 시작 등록
-        ok = run_manager.try_start(container_name=container_name, pid=process.pid)
-        if not ok:
-            # 혹시 레이스가 있으면 안전하게 정리
-            stop_container(container_name)
-            await ws.send_text("[BUSY] A run is already in progress.\n")
-            await ws.close()
-            return
-        
-        await ws.send_text(f"[START] container={container_name}\n")
-
-        # stdout 스트리밍
-        for line in stream_process_output(process):
-            await ws.send_text(line)
-
-        await ws.send_text("[DONE]\n")
-
-    except Exception as e:
-        await ws.send_text(f"[ERROR] {str(e)}\n")
-
-    finally:
-        # 상태 정리(Stop 했던 정상 종료던)
-        run_manager.stop_and_clear()
-        await ws.close()
-"""
-
-"""
-@router.websocket("/ws/run")
-async def run_ws(ws:WebSocket):
-    await ws.accept()
-
-    if run_manager.get_state().is_running:
-        await ws.send_text("[BUSY] A run is already in progress.\n")
-        await ws.close()
-        return
-    
-    container_name = None
-    q = None
-
-    try:
-        container_name, process, q = start_docker_process_with_queue()
-
-        # 실행 시작 등록
-        run_manager.try_start(container_name, process.pid)
-
-        await ws.send_text(f"[START] container={container_name}\n")
-
-        # stdout 스트리밍
-        while True:
-            line = q.get()
-            if line is None:
-                break
-            await ws.send_text(line)
-
-        await ws.send_text("[DONE]\n")
-    finally:
-        # 상태 정리(Stop 했던 정상 종료던)
-        run_manager.stop_and_clear()
-        await ws.close()
-"""
-
-"""
-@router.websocket("/ws/run")
-async def run_ws(ws:WebSocket):
-    await ws.accept()
-
-    if run_manager.get_state().is_running:
-        await ws.send_text("[BUSY] A run is already in progress.\n")
-        await ws.close()
-        return
-    
-    loop = asyncio.get_running_loop()
-    container_name_holder = {"name": None}
-
-    async def on_line(line: str):
-        await ws.send_text(line)
-
-    def blocking_runner():
-        try:
-            container_name = run_docker_and_strem_lines(
-                on_line=lambda l: asyncio.run_coroutine_threadsafe(
-                    on_line(l), loop
-                ),
-                on_done=lambda: asyncio.run_coroutine_threadsafe(
-                    ws.send_text("[DONE]\n"), loop
-                ),
-            )
-            container_name_holder["name"] = container_name
-        finally:
-            # 여기서 상태 정리
-            run_manager.stop_and_clear()
-
-    try:
-        run_manager.try_start("pending", -1)
-
-        # blocking 작업을 이벤트 루프 밖으로
-        await asyncio.to_thread(blocking_runner)
-
-    finally:
-        await ws.close()
-"""
 
 @router.websocket("/ws/run")
 async def run_ws(ws:WebSocket):
     await ws.accept()
+
+    project_id = ws.query_params.get("project_id")
 
     # --------------------------------------------------
     # 실행 중복 방지 (Day 8)
     # --------------------------------------------------
-    if run_manager.get_state().is_running:
+    if run_manager.get_state(project_id).is_running:
         await ws.send_text("[BUSY] A run is already in progress.\n")
         await ws.close()
         return
@@ -150,7 +33,10 @@ async def run_ws(ws:WebSocket):
     # --------------------------------------------------
     # 실행 컨텍스트 생성
     # --------------------------------------------------
-    project_id = "default"  # MVP에서는 고정
+    if not project_id:
+        await ws.send_text("[ERROR] project_id required\n")
+        await ws.close()
+
     project_path = PROJECTS_ROOT / project_id
     
     loop = asyncio.get_running_loop()
@@ -159,7 +45,7 @@ async def run_ws(ws:WebSocket):
     result_holder = {"result": None}    # thread -> async 공유용
 
     # 실행 시작 -> run_id 생성
-    run_id = create_run()
+    run_id = create_run(project_id)
 
     def on_line(line: str):
         loop.call_soon_threadsafe(queue.put_nowait, line)
@@ -167,8 +53,9 @@ async def run_ws(ws:WebSocket):
     def blocking_runner():
         try:
             res = run_docker_blocking(
+                project_id=project_id,
                 project_path=project_path, 
-                container_name=run_manager.get_state().container_name, 
+                container_name=run_manager.get_state(project_id).container_name, 
                 on_line=on_line,
             )
             result_holder["result"] = res
@@ -185,7 +72,7 @@ async def run_ws(ws:WebSocket):
             loop.call_soon_threadsafe(queue.put_nowait, None)  # stdout 종료 신호
 
     try:
-        run_manager.try_start("running", -1)
+        run_manager.try_start(project_id, "running", -1)
         await ws.send_text(f"[RUN_ID] {run_id}\n")
 
         # docker 실횅을 Thread로
@@ -195,17 +82,18 @@ async def run_ws(ws:WebSocket):
             item = await queue.get()
             if item is None:
                 break
-            append_output(run_id, item)
+            append_output(project_id, run_id, item)
             await ws.send_text(item)
 
     except WebSocketDisconnect:
-        run_manager.request_stop()          # WS 끊기면 곧바로 stop
+        run_manager.request_stop(project_id)          # WS 끊기면 곧바로 stop
 
     finally:
         res = result_holder["result"]
 
         if res is None:
             finish_run(
+                project_id,
                 run_id,
                 "error",
                 exit_code=None,
@@ -215,6 +103,7 @@ async def run_ws(ws:WebSocket):
             )
         else:
             finish_run(
+                project_id,
                 run_id,
                 res.status,
                 exit_code=res.exit_code,
@@ -223,7 +112,7 @@ async def run_ws(ws:WebSocket):
                 duration_ms=res.duration_ms,
             )
 
-        run_manager.stop_and_clear()
+        run_manager.stop_and_clear(project_id)
 
         if ws.application_state.name == "CONNECTED":
             await ws.close()

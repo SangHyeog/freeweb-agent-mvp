@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Generator, Optional
 from pathlib import Path
 from app.core.config import MAIN_FILE
-from app.core.config import DEFAULT_PROJECT, MAX_RUN_SECONDES
+from app.core.config import PROJECTS_DIR, DEFAULT_PROJECT_ID, MAX_RUN_SECONDES
 from app.services.run_detect import detect_run_spec
 from app.services.run_manager import run_manager
 from app.core.run_status import RunStatus
@@ -36,7 +36,7 @@ def run_main_file_docker() -> str:
     """
     Docker 컨테니어에서 main.py를 실행하고 stdout/stderr를 문자열로 반환
     """
-    project_path = os.path.abspath(str(DEFAULT_PROJECT))
+    project_path = os.path.abspath(str(PROJECTS_DIR/DEFAULT_PROJECT_ID))
     print("PROJECT PATH:", project_path)
 
     cmd = ["docker", "run", "--rm", "-v", f"{project_path}:/app", "-w", "/app", "python:3.11-slim", "python", "main.py"]
@@ -56,7 +56,7 @@ def run_main_file_docker() -> str:
     return "".join(output_lines)
 
 async def run_main_file_docker_stream():
-    project_path = os.path.abspath(str(DEFAULT_PROJECT))
+    project_path = os.path.abspath(str(PROJECTS_DIR/DEFAULT_PROJECT_ID))
 
     cmd = ["docker", "run", "--rm", "-v", f"{project_path}:/app", "-w", "/app", "python:3.11-slim", "python", "main.py"]
 
@@ -78,7 +78,7 @@ def start_docker_process() -> tuple[str, subprocess.Popen]:
     """
     docker run을 subprocess로 시작하고 (container_name, process)를 반환
     """
-    project_path = os.path.abspath(str(DEFAULT_PROJECT))
+    project_path = os.path.abspath(str(PROJECTS_DIR/DEFAULT_PROJECT_ID))
 
     container_name = f"freeweb-sbx-{uuid.uuid4().hex[:8]}"
 
@@ -98,7 +98,7 @@ def start_docker_process_with_queue() -> tuple[str, subprocess.Popen, queue.Queu
     """
     docker run을 subprocess로 시작하고 (container_name, process)를 반환
     """
-    project_path = os.path.abspath(str(DEFAULT_PROJECT))
+    project_path = os.path.abspath(str(PROJECTS_DIR/DEFAULT_PROJECT_ID))
 
     container_name = f"freeweb-sbx-{uuid.uuid4().hex[:8]}"
 
@@ -128,7 +128,7 @@ def start_docker_process_with_queue() -> tuple[str, subprocess.Popen, queue.Queu
 
 
 def run_docker_and_strem_lines(on_line, on_done):
-    project_path = os.path.abspath(str(DEFAULT_PROJECT))
+    project_path = os.path.abspath(str(PROJECTS_DIR/DEFAULT_PROJECT_ID))
     container_name = f"freeweb-sbx-{uuid.uuid4().hex[:8]}"
 
     cmd = ["docker", "run", "--rm", "--name", container_name, "-v", f"{project_path}:/app", "-w", "/app", "python:3.11-slim", "python", "main.py"]
@@ -151,7 +151,7 @@ def run_docker_and_strem_lines(on_line, on_done):
 
 
 def run_docker_blocking_old(on_line):
-    project_path = os.path.abspath(str(DEFAULT_PROJECT))
+    project_path = os.path.abspath(str(PROJECTS_DIR/DEFAULT_PROJECT_ID))
     container_name = f"freeweb-sbx-{uuid.uuid4().hex[:8]}"
 
     #cmd = ["docker", "run", "--rm", "--name", container_name, "-v", f"{project_path}:/app", "-w", "/app", "python:3.11-slim", "python", "main.py"]
@@ -237,8 +237,8 @@ def _classify_exit(exit_code: int | None, timed_out: bool, stopped: bool) -> tup
 
 
 # Day 15
-def run_docker_blocking(project_path: Path, container_name: str, on_line) -> RunResult:
-    opts = run_manager.options
+def run_docker_blocking(project_id: str, project_path: Path, container_name: str, on_line) -> RunResult:
+    opts = run_manager.get_options(project_id)
     spec = detect_run_spec(project_path, lang_override=opts.lang)
 
     # (선택) 헤더 로그
@@ -291,10 +291,8 @@ def run_docker_blocking(project_path: Path, container_name: str, on_line) -> Run
 
     try:
         for line in iter(process.stdout.readline, ""):
-            on_line(line)
-
             # Stop 플래그 폴링
-            if run_manager.stop_requested:
+            if run_manager.is_stop_requested(project_id):
                 stopped = True
                 on_line("\n[STOP] requested\n")
                 process.kill()
@@ -306,6 +304,9 @@ def run_docker_blocking(project_path: Path, container_name: str, on_line) -> Run
                 on_line(f"\n[TIMEOUT] exceeded {timeout_s}s\n")
                 process.kill()
                 break
+            
+            # 정상 출력
+            on_line(line)
     finally:
         try:
             process.stdout.close()

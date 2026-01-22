@@ -16,32 +16,37 @@ export type RunHistoryItem = {
     preview: string;
 };
 
-export function useHistory(API_BASE: string) {
+export function useHistory(API_BASE: string, projectId: string) {
     const [history, setHistory] = useState<RunHistoryItem[]>([]);
     const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
     const refreshHistory = useCallback(async () => {
         console.log("[useHistory] refreshHistory called");
-        const res = await fetch(`${API_BASE}/history?limit=30`);
+        const res = await fetch(`${API_BASE}/history?project_id=${encodeURIComponent(projectId)}&&limit=30`);
         const data = await res.json();
         console.log("[useHistory] fetched items", data.items);
         setHistory(data.items || []);
-    }, [API_BASE]);
+    }, [API_BASE, projectId]);
 
     const loadHistoryOutput = useCallback(async (runId: string): Promise<string> => {
         setSelectedRunId(runId);
-        const res = await fetch(`${API_BASE}/history/${runId}`);
+        const res = await fetch(`${API_BASE}/history/${runId}?project_id=${encodeURIComponent(projectId)}`);
 
         if (!res.ok)
             throw new Error("History load failed");
 
         const data = await res.json();
         return data.output || "";
-    }, [API_BASE]);
+    }, [API_BASE, projectId]);
+
+    useEffect(() => {
+        setHistory([]);
+        setSelectedRunId(null);
+    }, [projectId]);
 
     useEffect(() => {
         refreshHistory();
-    }, [refreshHistory]);
+    }, [projectId, refreshHistory]);
 
     return { history, selectedRunId, refreshHistory, loadHistoryOutput };
 }
