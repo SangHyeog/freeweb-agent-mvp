@@ -1,5 +1,4 @@
 from fastapi import APIRouter, HTTPException, Query
-from app.services.run_service import (run_main_file, run_main_file_docker)
 
 from pathlib import Path
 from app.services.run_detect import get_run_spec_info
@@ -27,18 +26,3 @@ def get_run_spec(project_id: str = Query(...)):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e),)
 
-
-
-@router.post("")
-def run_project():
-    output = run_main_file_docker()
-    return {
-        "output": output
-    }
-
-@router.post("/main")
-def run_project():
-    output = run_main_file()
-    return {
-        "output": output
-    }

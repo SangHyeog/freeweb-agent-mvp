@@ -9,7 +9,7 @@ class RunSpec:
     lang: str               # "python" | "node" | "bash"
     image: str              # docker image
     cmd: list[str]          # command inside container
-    entry: str              # entry file path (relative)
+    entry: str | None       # entry file path (relative)
 
 
 def _read_run_json(project_path: Path) -> dict | None:
@@ -33,15 +33,34 @@ def detect_run_spec(project_path: Path, lang_override: str = "auto") -> RunSpec:
     cfg = _read_run_json(project_path)
     if cfg:
         lang = (cfg.get("lang") or "").lower().strip()
-        entry = (cfg.get("entry") or "").strip()
+        entry = (cfg.get("entry") or "").strip() or None
+        cmd = cfg.get("cmd")
 
         if lang_override != "auto":
             lang = lang_override
 
         if lang not in ("python", "node", "bash"):
             raise ValueError("run.json lang must be one of: python | node | bash")
+        # ------------------------------
+        # 1) cmd 우선 (Node 핵심)
+        # ------------------------------
+        if cmd:
+            if not isinstance(cmd, list) or not all(isinstance(x, str) for x in cmd):
+                raise ValueError("run.json cmd must be list[str]")
+            
+            image = {
+                "python": "python:3.11-slim",
+                "node": "node:20-slim",
+                "bash": "debian:bookworm-slim",
+            }[lang]
+
+            return RunSpec(lang=lang, image=image, cmd=cmd, entry=entry,)
+        
+        # ------------------------------
+        # 2) entry 기반 (python / bash / node fallback)
+        # ------------------------------
         if not entry:
-            raise ValueError("run.json nust include entry")
+            raise ValueError("run.json must include entry or cmd")
         
         if not (project_path / entry).exists():
             raise FileNotFoundError(f"Entry not found: {entry}")
@@ -49,6 +68,7 @@ def detect_run_spec(project_path: Path, lang_override: str = "auto") -> RunSpec:
         if lang == "python":
             return RunSpec(lang="python", image="python:3.11-slim", cmd=["python", "-u", entry], entry=entry)
         if lang == "node":
+            # legacy fallback (권장 X)
             return RunSpec(lang="node", image="node:20-slim", cmd=["node", entry], entry=entry)
         return RunSpec(lang="bash", image="debian:bookworm-slim", cmd=["bash", entry], entry=entry)
 
