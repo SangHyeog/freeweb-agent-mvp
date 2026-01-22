@@ -11,6 +11,7 @@ from app.services.run_detect import detect_run_spec
 from app.services.run_manager import run_manager
 from app.core.run_status import RunStatus
 
+from app.services.run_preflight import node_preflight
 from app.services.docker_runner import docker_fs_secu
 
 
@@ -61,11 +62,27 @@ def run_docker_blocking(project_id: str, project_path: Path, container_name: str
     on_line(f"[LANG] {spec.lang}\n")
     on_line(f"[ENTRY] {spec.entry}\n")
 
-    is_node = (spec.lang == "node")
 
     # ------------------------------------
     # docker run
     # ------------------------------------
+    is_node = (spec.lang == "node")
+    if is_node:
+        # 컨테이너를 띄우기 전에 사용자에게 해결책 제시
+        pf = node_preflight(project_id, project_path)
+        for m in pf.messages:
+            on_line(m + "\n")
+        if pf.fatal:
+            return RunResult(
+                status="error",
+                exit_code=None,
+                signal=None,
+                reason="Node preflight failed",
+                duration_ms=0,
+                stopped=False,
+                timed_out=False,
+            )
+
     cmd = [
         "docker", "run", "--rm",
         "--name", container_name,
