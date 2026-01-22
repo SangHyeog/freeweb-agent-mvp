@@ -38,3 +38,13 @@ frontend/
      ├─ useFiles.ts
      ├─ useRun.ts
      └─ useHistory.ts
+
+## AI Agent가 코드를 실행해도 시스템이 안 깨지는 상태
+프로젝트 단위 실행	✅
+Docker 기반 안전 실행	✅
+read-only + 캐시 전략	✅
+Node / Python / Bash 런타임	✅
+Run / Stop / Timeout	✅
+WebSocket 로그 스트리밍	✅
+Run history	✅
+Multi-project UI ✅
