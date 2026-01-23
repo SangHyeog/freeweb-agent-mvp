@@ -8,6 +8,9 @@ from app.api.stop import router as stop_router
 from app.api.files import router as files_router
 from app.api.history import router as history_router
 from app.api.run_presets import router as run_presets_router
+from app.agent.api.agent import router as agent_router
+from app.api.logs import router as logs_router
+# (옵션) from app.api.logs_sse import router as logs_sse_router
 
 app = FastAPI(title="Freeweb Agent MVP API")
 
@@ -28,6 +31,9 @@ app.include_router(stop_router)
 app.include_router(files_router)
 app.include_router(history_router)
 app.include_router(run_presets_router)
+app.include_router(agent_router, prefix="/agent")
+app.include_router(logs_router)
+#app.include_router(logs_sse_router)
 
 @app.get("/")
 def root():

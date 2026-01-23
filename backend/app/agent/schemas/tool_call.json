@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "request_id",
+    "session_id",
+    "project_id",
+    "actor",
+    "tool",
+    "input",
+    "trace",
+    "safety"
+  ],
+  "properties": {
+    "spec_version": { "const": "tool.v1" },
+    "request_id": { "type": "string" },
+    "session_id": { "type": "string" },
+    "project_id": { "type": "string" },
+    "actor": {
+      "type": "object",
+      "required": ["type", "name"],
+      "properties": {
+        "type": { "enum": ["agent", "user", "system"] },
+        "name": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "tool": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "input": { "type": "object" },
+    "trace": {
+      "type": "object",
+      "required": ["run_id", "step_id"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "parent_step_id": { "type": ["string", "null"] },
+        "step_id": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "safety": {
+      "type": "object",
+      "required": ["mode", "allow_network"],
+      "properties": {
+        "mode": { "enum": ["standard", "strict"] },
+        "allow_network": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
