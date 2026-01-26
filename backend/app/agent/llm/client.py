@@ -40,31 +40,67 @@ def load_llm_config() -> LLMConfig:
     )
 
 
-def generate_fix_diff(*, error_log: str, target_hint: str = "main.js") -> str:
+def generate_fix_diff(*, error_log: str, files: list[dict]) -> str:
     cfg = load_llm_config()
 
-    if cfg.provider == "anthropic":
-        return _anthropic_generate_diff(cfg, error_log=error_log, target_hint=target_hint)
+    try:
+        if cfg.provider == "anthropic":
+            return _anthropic_generate_diff(
+                cfg,
+                error_log=error_log,
+                files=files,
+            )
 
-    if cfg.provider == "openai":
-        return _openai_generate_diff(cfg, error_log=error_log, target_hint=target_hint)
-    
-    if cfg.provider == "gemini":
-        return _gemini_generate_diff(cfg, error_log=error_log, target_hint=target_hint)
-    
-    # ---- TEMP FALLBACK (no credits / offline) ----
-    if "ReferenceError" in error_log and "test1" in error_log:
-        return """\
---- a/main.js
-+++ b/main.js
+        if cfg.provider == "openai":
+            return _openai_generate_diff(
+                cfg,
+                error_log=error_log,
+                files=files,
+            )
+
+        if cfg.provider == "gemini":
+            return _gemini_generate_diff(
+                cfg,
+                error_log=error_log,
+                files=files,
+            )
+
+        raise LLMError(f"Unsupported LLM_PROVIDER={cfg.provider}")
+
+    except Exception as e:
+        # 👇 여기서 LLM 실패를 흡수
+        llm_error_msg = str(e)
+
+    # ---- FALLBACK ZONE (Day23 핵심) ----
+    # 규칙 기반 / stub / offline 대응
+    for f in files:
+        if "ReferenceError" in error_log and "test1" in f["content"]:
+            return """\
+--- a/{f['path']}
++++ b/{f['path']}
 @@ -1 +1 @@
 -console.log(test1)
 +console.log("test1")
 """
-    raise LLMError(f"Unsupported LLM_PROVIDER={cfg.provider}")
+
+    # fallback도 못하면, 그때 실패 반환
+    raise LLMError(f"LLM failed and no fallback matched: {llm_error_msg}")
 
 
-def _openai_generate_diff(cfg: LLMConfig, *, error_log: str, target_hint: str) -> str:
+def _build_files_block(files: list[dict]) -> str:
+    blocks = []
+    for f in files:
+        blocks.append(
+            f"""File: {f['path']}
+----------------
+{f['content']}
+----------------
+"""
+        )
+    return "\n\n".join(blocks)
+
+
+def _openai_generate_diff(cfg: LLMConfig, *, error_log: str, files: list[dict]) -> str:
     # OpenAI Python SDK v1 스타일 가정
     from openai import OpenAI
 
@@ -74,13 +110,17 @@ def _openai_generate_diff(cfg: LLMConfig, *, error_log: str, target_hint: str) -
     
     client = OpenAI(api_key=api_key)
 
+    files_block = _build_files_block(files)
+
     user_prompt = f"""\
 Error log:
 {error_log}
 
+Related files:
+{files_block}
+
 Generate a unified diff that fixes the error.
-Target file hint: {target_hint}
-Remember: output ONLY unified diff.
+Output ONLY unified diff.
 """
     resp = client.chat.completions.create(
         model=cfg.model,
@@ -98,7 +138,7 @@ Remember: output ONLY unified diff.
     return text
 
 
-def _anthropic_generate_diff(cfg: LLMConfig, *, error_log: str, target_hint: str) -> str:
+def _anthropic_generate_diff(cfg: LLMConfig, *, error_log: str, files: list[dict]) -> str:
     # Anthropic Python SDK
     # 공식 문서: client.messages.create(...) :contentReference[oaicite:1]{index=1}
     try:
@@ -112,13 +152,17 @@ def _anthropic_generate_diff(cfg: LLMConfig, *, error_log: str, target_hint: str
     
     client = Anthropic(api_key=api_key)
 
+    files_block = _build_files_block(files)
+
     user_prompt = f"""\
 Error log:
 {error_log}
 
+Related files:
+{files_block}
+
 Generate a unified diff that fixes the error.
-Target file hint: {target_hint}
-Remember: output ONLY unified diff.
+Output ONLY unified diff.
 """
     try:
         # Messages API 호출 :contentReference[oaicite:2]{index=2}
@@ -152,7 +196,7 @@ Remember: output ONLY unified diff.
     validate_unified_diff(text)
     return text
 
-def _gemini_generate_diff(cfg: LLMConfig, *, error_log: str, target_hint: str) -> str:
+def _gemini_generate_diff(cfg: LLMConfig, *, error_log: str, files: list[dict]) -> str:
     try:
         from google import genai
     except Exception as e:
@@ -164,6 +208,8 @@ def _gemini_generate_diff(cfg: LLMConfig, *, error_log: str, target_hint: str) -
 
     client = genai.Client(api_key=api_key)
 
+    files_block = _build_files_block(files)
+
     """
     # 모델 확인
     for m in client.models.list():
@@ -174,9 +220,11 @@ def _gemini_generate_diff(cfg: LLMConfig, *, error_log: str, target_hint: str) -
 Error log:
 {error_log}
 
+Related files:
+{files_block}
+
 Generate a unified diff that fixes the error.
-Target file hint: {target_hint}
-Remember: output ONLY unified diff.
+Output ONLY unified diff.
 """
 
     try:

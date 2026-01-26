@@ -45,7 +45,7 @@ def write_file(input: dict):
             / step_id
         )
         backup_path = backup_root / path
-        backup_path.parent.mkdir(parents=True, exists_ok=True)
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
 
         shutil.copy2(target, backup_path)
 

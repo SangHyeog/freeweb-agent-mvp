@@ -3,7 +3,8 @@
 __pycache__/
 *.pyc
 .env
-.env_openai
+.env_*
+
 
 # Node
 node_modules/
