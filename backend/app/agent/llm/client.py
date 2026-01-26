@@ -25,8 +25,12 @@ def load_llm_config() -> LLMConfig:
 
     if provider == "anthropic":
         model = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonet-20241022")
-    else:
+    elif provider == "openai":
         model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+    elif provider == "gemini":
+        model = os.getenv("GEMINI_MODEL", "models/gemini-2.5-pro")
+    else:
+        raise LLMError(f"Unknown LLM_PROVIDER={provider}")
 
     return LLMConfig(
         provider=provider,
@@ -37,6 +41,17 @@ def load_llm_config() -> LLMConfig:
 
 
 def generate_fix_diff(*, error_log: str, target_hint: str = "main.js") -> str:
+    cfg = load_llm_config()
+
+    if cfg.provider == "anthropic":
+        return _anthropic_generate_diff(cfg, error_log=error_log, target_hint=target_hint)
+
+    if cfg.provider == "openai":
+        return _openai_generate_diff(cfg, error_log=error_log, target_hint=target_hint)
+    
+    if cfg.provider == "gemini":
+        return _gemini_generate_diff(cfg, error_log=error_log, target_hint=target_hint)
+    
     # ---- TEMP FALLBACK (no credits / offline) ----
     if "ReferenceError" in error_log and "test1" in error_log:
         return """\
@@ -46,16 +61,6 @@ def generate_fix_diff(*, error_log: str, target_hint: str = "main.js") -> str:
 -console.log(test1)
 +console.log("test1")
 """
-    raise LLMError("LLM unavailable and no fallback rule matched")
-
-    cfg = load_llm_config()
-
-    if cfg.provider == "anthropic":
-        return _anthropic_generate_diff(cfg, error_log=error_log, target_hint=target_hint)
-
-    if cfg.provider == "openai":
-        return _openai_generate_diff(cfg, error_log=error_log, target_hint=target_hint)
-
     raise LLMError(f"Unsupported LLM_PROVIDER={cfg.provider}")
 
 
@@ -143,6 +148,51 @@ Remember: output ONLY unified diff.
         pass
 
     text = "\n".join(text_parts).strip()
+    text = normalize_diff(text)
+    validate_unified_diff(text)
+    return text
+
+def _gemini_generate_diff(cfg: LLMConfig, *, error_log: str, target_hint: str) -> str:
+    try:
+        from google import genai
+    except Exception as e:
+        raise LLMError(f"google-genai import failed: {e}")
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise LLMError("GEMINI_API_KEY is missing")
+
+    client = genai.Client(api_key=api_key)
+
+    """
+    # 모델 확인
+    for m in client.models.list():
+        print(m.name)
+    """
+
+    user_prompt = f"""\
+Error log:
+{error_log}
+
+Generate a unified diff that fixes the error.
+Target file hint: {target_hint}
+Remember: output ONLY unified diff.
+"""
+
+    try:
+        resp = client.models.generate_content(
+            model=cfg.model,
+            contents=user_prompt,
+            config={
+                "temperature": cfg.temperature,
+                "max_output_tokens": cfg.max_tokens,
+                "system_instruction": SYSTEM_PROMPT_DIFF_ONLY,
+            },
+        )
+    except Exception as e:
+        raise LLMError(str(e))
+
+    text = (resp.text or "").strip()
     text = normalize_diff(text)
     validate_unified_diff(text)
     return text
