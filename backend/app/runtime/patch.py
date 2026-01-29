@@ -48,11 +48,16 @@ def apply_unified_diff(input: dict):
         patched = _apply_patch(original, patch["hunks"])
 
         if patched is None:
-            conflicts.append({
-                "path": rel_path,
-                "reason": "hunk_failed"
-            })
-            continue
+            fallback = _fallback_simple_replace(original, patch["hunks"])
+
+            if fallback is not None:
+                patched = fallback
+            else:
+                conflicts.append({
+                    "path": rel_path,
+                    "reason": "hunk_failed"
+                })
+                continue
 
         if not dry_run:
             target.write_text("".join(patched), encoding="utf-8")
@@ -136,23 +141,80 @@ def _apply_patch(original: List[str], hunks: List[dict]) -> List[str] | None:
             return None
         
         idx = old_start + offset
-        new_block = []
+        new_block: list[str] = []
+        consumed = 0
 
         for line in hunk["lines"]:
+            # context line
             if line.startswith(" "):
-                if idx >= len(result) or result[idx] != line[1:] + "\n":
+                if idx >= len(result):
                     return None
+                
+                cur =  result[idx].rstrip("\r\n")
+                expected = line[1:]
+
+                if cur != expected:
+                    return None
+                
                 new_block.append(result[idx])
                 idx += 1
+                consumed += 1
+            # removed line
             elif line.startswith("-"):
-                if idx >= len(result) or result[idx] != line[1:] + "\n":
+                if idx >= len(result):
                     return None
+                cur = result[idx].rstrip("\r\n")
+                expected = line[1:]
+
+                if cur != expected:
+                    return None
+                
                 idx += 1
+                consumed += 1
+            # added line    
             elif line.startswith("+"):
                 new_block.append(line[1:] + "\n")
+            else:
+                # invalid diff line
+                return None
 
-        result[old_start + offset:idx] = new_block
-        offset += len(new_block) - (idx - (old_start + offset))
+        # replace the block
+        start = old_start + offset
+        end = start + consumed
+        result[start:end] = new_block
+
+        offset += len(new_block) - consumed
     
     return result
             
+
+def _fallback_simple_replace(original: list[str], hunks: list[dict]) -> list[str] | None:
+    """
+    Very naive fallback:
+    - only supports single remove/add hunk
+    - string-based replace
+    """
+    content = "".join(original)
+
+    for hunk in hunks:
+        removed = []
+        added = []
+
+        for line in hunk["lines"]:
+            if line.startswith("-"):
+                removed.append(line[1:])
+            elif line.startswith("+"):
+                added.append(line[1:])
+
+        if not removed:
+            continue
+
+        before = "\n".join(removed)
+        after = "\n".join(added)
+
+        if before not in content:
+            return None
+
+        content = content.replace(before, after, 1)
+
+    return content.splitlines(keepends=True)

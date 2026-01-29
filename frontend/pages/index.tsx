@@ -6,6 +6,7 @@ import Tabs from "../components/Tabs";
 import FileTree from "../components/FileTree";
 import QuickOpen from "../components/QuickOpen";
 import HistoryPanel from "../components/HistoryPanel";
+import FixPreviewModal from "../components/FixPreviewModal";
 
 import { useProjects } from "../hooks/useProjects";
 import { useFiles, guessLanguage } from "../hooks/useFiles";
@@ -13,6 +14,11 @@ import { useRun } from "../hooks/useRun";
 import { useHistory } from "../hooks/useHistory";
 import { useRunSpec } from "../hooks/useRunSpec";
 import { useRunPresets } from "../hooks/useRunPresets";
+
+import { extractChangedLines } from "../utils/diff";
+import type { editor as MonacoEditorType } from "monaco-editor";
+import { difference } from "next/dist/build/utils";
+
 
 
 export default function Home() {
@@ -28,6 +34,8 @@ export default function Home() {
   const runSpec = useRunSpec(API_BASE, projectId);
   const presets = useRunPresets(API_BASE, projectId);
   
+  //  run_id
+  const [currentRunId, setCurrentRunId] = useState<string | null>(null);
 
   // quick open
   const [quickOpen, setQuickOpen] = useState(false);
@@ -43,6 +51,43 @@ export default function Home() {
   const isDraggingRef = useRef(false);
   const dragStartYRef = useRef<number>(0);
   const dragStartHeightRef = useRef<number>(0);
+
+  //  agent fix
+  const [fixPreviewOpen, setFixPreviewOpen] = useState(false);
+  const [fixDiff, setFixDiff] = useState<string | null>(null);
+  const [fixTarget, setFixTarget] = useState<string | undefined>();
+  const [fixReason, setFixReason] = useState<string | undefined>();
+  const [fixExplanation, setFixExplanation] = useState<string | undefined>();
+  const [fixStatus, setFixStatus] = useState<"idle" | "previewing" | "applying" | "applied" | "not_fixed" | "llm_unavailable">("idle");
+
+  const hasError = /ReferenceError|TypeError|SyntaxError|Error:|Traceback|ERR/i.test(output);
+
+  // Editor
+  const editorRef = useRef<MonacoEditorType.IStandaloneCodeEditor | null>(null);
+  const monacoRef = useRef<any>(null);
+  const decorationsRef = useRef<string[]>([]);
+  const [pendingDiff, setPendingDiff] = useState<string | null>();
+
+  
+
+  const highlightOverlayStyle: React.CSSProperties = {
+    position: "absolute",
+    inset: 0,
+    pointerEvents: "none",
+    fontFamily: "monospace",
+    fontSize: 14,
+    whiteSpace: "pre",
+    lineHeight: "1.5em",
+  };
+
+  const editorStyle: React.CSSProperties = {
+    position: "absolute",
+    inset: 0,
+    fontFamily: "monospace",
+    fontSize: 14,
+    background: "transparent",
+    lineHeight: "1.5em",
+  };
 
 
   // init
@@ -102,11 +147,42 @@ export default function Home() {
     };
   }, []);
 
+  //  highlight
+  useEffect(() => {
+    if (!pendingDiff) return;
+    if (!editorRef.current || !monacoRef) return;
+
+    const model = editorRef.current.getModel();
+    if (!model) return;
+
+    highlightChangedLines(pendingDiff);
+    setPendingDiff(null);
+
+  }, [files.code])
+
+  //  prject change
+  useEffect(() =>{
+    clearFixHighlights();
+  }, [projectId]);
+  
   const onRun = () => {
+    //  fix 상태 초기화
+    setFixStatus("idle");
+    setFixDiff(null);
+    setFixPreviewOpen(false);
+
+    //  runid초기화
+    setCurrentRunId(null);
     setOutput("");
+
     run.run(
-      (chunk) => setOutput((prev) => prev + chunk),
-      () => hist.refreshHistory()
+      (chunk) => {
+        const m = String(chunk).match(/\[RUN_ID\]\s*([a-zA-Z0-9_-]+)/);
+        if (m?.[1])
+          setCurrentRunId(m[1]);
+        setOutput((prev) => prev + chunk);
+      },
+      () => hist.refreshHistory(),
     );
   };
 
@@ -120,6 +196,207 @@ export default function Home() {
     runSpec.refresh();              //  실행 규칙 재 감지
   };
 
+  async function previewFix() {
+    if (!currentRunId) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/agent/fix/preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: projectId,
+          run_id: currentRunId,
+          entry: "main.js",
+          lang: "node",
+        }),
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        // 서버가 quota/llm_error 같은 걸 detail에 넣는 경우가 많아서 분기
+        setFixStatus("llm_unavailable");
+        return;
+      }
+
+      const patch = data.patches?.[0];
+      const diff = patch?.diff_preview;
+
+      //  diff 미리보기 상태 셋팅
+      setFixDiff(diff);
+      setFixTarget(patch?.target);
+      setFixReason(data.reason || data.meta?.failure_type);
+      setFixExplanation(data.meta?.explanation);
+
+      // 모달 열기
+      setFixPreviewOpen(true);
+
+      // 준비 완료 -> idle로 복귀(모달에서 apply/cancel)
+      setFixStatus("idle");
+    } catch (e) {
+      setFixStatus("llm_unavailable");
+    }
+  } 
+
+  async function applyFix() {
+    if (!fixDiff || !currentRunId) return;
+
+    setFixStatus("applying");
+
+    console.log("SENDING DIFF:\n", fixDiff);
+
+    try {
+      const res = await fetch(`${API_BASE}/agent/fix/apply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: projectId,
+          run_id: currentRunId,
+          diff: fixDiff,
+        }),
+      });
+      
+      if (!res.ok){
+        setFixStatus("not_fixed");
+        return;
+      }
+
+      //  수정된 파일 다시 로드
+      const newContent = await files.reloadFile("main.js");
+
+      setPendingDiff(fixDiff);
+
+      /*// 하이라이트표시
+      const lines = extractChangedLines(fixDiff, files.code);
+      highlightChangedLines(lines, fixDiff);
+
+      if (lines.length > 0 && editorRef.current) {
+        editorRef.current.revealLineInCenter(lines[0]);
+      }*/
+
+      //  상태 갱신
+      setFixDiff(null);
+      setFixStatus("applied");
+      //  모달 닫기
+      setFixPreviewOpen(false);
+    } catch {
+      setFixStatus("not_fixed");
+    }
+  }
+
+  async function applyAndRun() {
+    if (!fixDiff || !currentRunId) return;
+
+    setFixStatus("applying");
+
+    try {
+      const res = await fetch(`${API_BASE}/agent/fix/apply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: projectId,
+          run_id: currentRunId,
+          diff: fixDiff,
+        }),
+      });
+
+      if (!res.ok) {
+        setFixStatus("not_fixed");
+        return;
+      }
+
+      // ✅ Fix 적용 완료
+      setFixPreviewOpen(false);
+      setFixDiff(null);
+      setFixStatus("idle");
+
+      // ✅ 바로 Run 재실행
+      onRun();   // ← 기존 Run 버튼과 동일한 함수
+    } catch {
+      setFixStatus("not_fixed");
+    }
+  }
+
+  const onApplyAndRerun = () => {
+    // Fix 상태 초기화
+    setFixStatus("idle");
+
+    // output 초기화 (선택)
+    setOutput("");
+
+    // 다시 run 실행
+    onRun();
+  };
+
+  function highlightChangedLines(diff: string){
+    const monaco = monacoRef.current
+    if (!editorRef.current || !monaco) return;
+
+    const model = editorRef.current.getModel();
+    if (!model) return;
+
+    //  diff에서 +라인 내용 추출
+    const addedContents = extractAddedContents(diff);
+    const decorations = [];
+
+    for (const content of addedContents) {
+      const line = findLineByContent(model, content);
+      if (!line) continue;
+
+      decorations.push({
+        range: new monaco.Range(line, 1, line, model.getLineMaxColumn(line)),
+        options: {
+          isWholeLine: true,
+          className: "agent-fix-line",
+        },
+      });
+    }
+
+    decorationsRef.current = model.deltaDecorations(
+      decorationsRef.current,
+      decorations
+    );
+
+    // 5초 후 자동 제거
+    /*setTimeout(() => {
+      clearFixHighlights();
+    }, 5000);*/
+  }
+
+  function extractAddedContents(diff: string): string[] {
+    return diff
+      .split("\n")
+      .filter(l => l.startsWith("+") && !l.startsWith("+++"))
+      .map(l => l.slice(1).trim())
+      .filter(Boolean);
+  }
+
+  function findLineByContent(model: MonacoEditorType.ITextModel, content: string): number | null {
+    const lineCount = model.getLinesContent();
+
+    for (let i = 1; i <= lineCount.length; i++) {
+      const line = model.getLineContent(i).trim();
+      if (line === content)  {
+        return i;
+      }
+    }
+    return null
+  }
+
+
+  function clearFixHighlights(){
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const model = editor.getModel();
+    if (!model) return;
+
+    decorationsRef.current = model.deltaDecorations(
+      decorationsRef.current,
+      []
+    );
+  }
+  
   return (
     <div style={{ height: "100%", display: "flex", fontFamily: "sans-serif" }}>
       {/* Left */}
@@ -229,7 +506,10 @@ export default function Home() {
             files.setSelectedPath(path);
             files.setCode(tab.content);
           }}
-          onClose={(path) => files.closeTab(path)}
+          onClose={(path) =>{
+              clearFixHighlights();
+              files.closeTab(path);
+          }}
           disabled={run.isRunning}
         />
 
@@ -328,6 +608,10 @@ export default function Home() {
             language={guessLanguage(files.selectedPath)}
             value={files.code}
             onChange={(v) => files.updateCode(v || "")}
+            onMount={(editor, monaco) => {
+              editorRef.current = editor;
+              monacoRef.current = monaco;
+            }}
           />
         </div>
 
@@ -362,10 +646,34 @@ export default function Home() {
         />
 
         <div style={{ flex: 1, minHeight: 0 }}>
-          <OutputPanel output={output} autoScroll={autoScroll} setAutoScroll={setAutoScroll} setOutput={setOutput} />
+          <OutputPanel 
+            output={output} 
+            autoScroll={autoScroll} 
+            setAutoScroll={setAutoScroll} 
+            setOutput={setOutput} 
+            
+            canFix={!run.isRunning && !!currentRunId && hasError}
+            fixStatus={fixStatus}
+            onFixWithAgent={previewFix}
+            onApplyAndRerun={onApplyAndRerun}
+          />
         </div>
       </div>
-
+      <FixPreviewModal
+        open={fixPreviewOpen}
+        diff={fixDiff}
+        targetPath={fixTarget}
+        reason={fixReason}
+        explanation={fixExplanation}
+        onApply={applyFix}
+        onApplyAndRun={applyAndRun}
+        onCancel={() => {
+          setFixPreviewOpen(false);
+          setFixDiff(null);
+          setFixStatus("idle");
+        }}
+        applying={fixStatus === "applying"}
+      />
       <QuickOpen
         open={quickOpen}
         items={files.items}

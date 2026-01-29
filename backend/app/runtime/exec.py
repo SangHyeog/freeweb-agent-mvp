@@ -8,7 +8,7 @@ from datetime import datetime
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = BASE_DIR / "projects"
-LOGS_ROOT = BASE_DIR / "app/storage/logs"
+LOGS_ROOT = BASE_DIR / "storage/logs"
 LOGS_ROOT.mkdir(parents=True, exist_ok=True)
 
 

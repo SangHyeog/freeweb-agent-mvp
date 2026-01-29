@@ -74,14 +74,28 @@ def generate_fix_diff(*, error_log: str, files: list[dict]) -> str:
     # ---- FALLBACK ZONE (Day23 핵심) ----
     # 규칙 기반 / stub / offline 대응
     for f in files:
-        if "ReferenceError" in error_log and "test1" in f["content"]:
-            return """\
---- a/{f['path']}
-+++ b/{f['path']}
-@@ -1 +1 @@
--console.log(test1)
-+console.log("test1")
-"""
+        """
+        print("==== FALLBACK CHECK ====")
+        print("error_log repr:", repr(error_log))
+        print("file path:", f["path"])
+        print("file content repr:", repr(f["content"]))
+        print("cond1 ReferenceError:", "ReferenceError" in error_log)
+        print("cond2 test1 is not defined:", "test1 is not defined" in error_log)
+        print("cond3 console.log(test1:", "console.log(test1" in f["content"])
+        print("========================")
+        """
+        if (
+            "ReferenceError" in error_log
+            and "test1 is not defined" in error_log
+            and "console.log(test1" in f["content"]["content"]
+        ):
+            return (
+                f"--- a/{f['path']}\n"
+                f"+++ b/{f['path']}\n"
+                f"@@ -2,1 +2,1 @@\n"
+                f"-console.log(test1);\n"
+                f"+console.log(\"test1\");\n"
+            )
 
     # fallback도 못하면, 그때 실패 반환
     raise LLMError(f"LLM failed and no fallback matched: {llm_error_msg}")

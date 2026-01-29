@@ -122,8 +122,10 @@ export function useFiles(API_BASE: string, projectId: string) {
             body: JSON.stringify({ path: tab.path, content: tab.content }),
         });
 
-        if (!res.ok) 
-            throw new Error("Save failed");
+        if (!res.ok) {
+            const text = await res.text();
+            throw new Error(`Save failed: ${text}`);
+        }
 
         setTabs((prev) => prev.map((t) => (t.path === selectedPath ? { ...t, isDirty: false} : t)));
     }, [API_BASE, projectId, tabs, selectedPath]);
@@ -229,11 +231,31 @@ export function useFiles(API_BASE: string, projectId: string) {
                 setSelectedPath(next.path);
                 setCode(next.content);
             } else {
-                //  탭이 다 닫히면 main.py 다시 열기
-                await openFile("main.py");
+                setSelectedPath("");
+                setCode("");
             }
         }
     }, [API_BASE, projectId, tabs, selectedPath, openFile]);
+
+    const reloadFile = useCallback(async (path: string): Promise<string> => {
+        const res = await fetch(`${API_BASE}/files/read?project_id=${encodeURIComponent(projectId)}&path=${encodeURIComponent(path)}`);
+        if (!res.ok)
+            throw new Error(`Failed to reload: ${path}`);
+
+        const data = await res.json();
+        const content = data.content || "";
+
+        setTabs((prev) => 
+            prev.map((t) => 
+                t.path === path ? { ...t, content, isDirty: false } : t
+            )
+        );
+
+        setSelectedPath(path);
+        setCode(content);
+
+        return content;
+    }, [API_BASE, projectId]);
 
     useEffect(() => {
         if (!projectId) return;
@@ -274,5 +296,6 @@ export function useFiles(API_BASE: string, projectId: string) {
         createFile,
         deleteFile,
         renameFile,
+        reloadFile,
     };
 }

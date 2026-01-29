@@ -58,8 +58,19 @@ def write_file(project_id: str| None, path: str, content: str) -> None:
 
     if p.is_dir():
         raise ValueError("Path is a directory")
+    
+    # 🔥 핵심: 잘못된 개행 시퀀스 정리
+    normalized = (
+        content
+        .replace("\r\r\n", "\n")   # 👈 이 케이스
+        .replace("\r\n", "\n")     # 일반 CRLF
+        .replace("\r", "\n")       # 남은 CR
+    )
+    # 끝 개행은 1개만
+    normalized = normalized.rstrip("\n") + "\n"
+
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(content, encoding="utf-8")
+    p.write_text(normalized, encoding="utf-8")
 
 
 def create_file(project_id: str| None, path: str) -> None:

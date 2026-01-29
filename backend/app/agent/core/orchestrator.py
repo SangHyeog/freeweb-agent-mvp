@@ -3,7 +3,7 @@ from pathlib import Path
 
 from app.agent.core.stack_parser import extract_files_from_stack
 from app.agent.core.path_utils import normalize_project_paths
-from app.agent.tools.fs import read_file_tool, write_file
+from app.agent.tools.fs import read_file_tool, write_file_tool
 from app.runtime.fs import PROJECTS_ROOT
 from app.agent.core.rule_engine import apply_rules_multi
 from app.agent.tools.exec import run as exec_run
@@ -101,8 +101,8 @@ class SimpleAgentOrchestrator:
 
         if rule_result:
             rule_applied = True
-            # 규칙 기반 수정 -> write_file
-            write_file({
+            # 규칙 기반 수정 -> write_file_tool
+            write_file_tool({
                 "project_id": project_id,
                 "path": rule_result["path"],
                 "content": rule_result["content"],
@@ -178,6 +178,7 @@ class SimpleAgentOrchestrator:
             data = data[-tail_bytes:]
 
         return data.decode("utf-8", errors="replace")
+
     
 def agent_loop(user_message, context):
     llm_resp = call_llm(

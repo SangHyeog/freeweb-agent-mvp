@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+type FixStatus = "idle" | "fixing" | "fixed" | "not_fixed" | "llm_unavailable" | "previewing";
+
+
 export function useRun(API_BASE: string, projectId: string) {
     const [isRunning, setIsRunning] = useState(false);
     const wsRef = useRef<WebSocket | null>(null);
+    const [fixStatus, setFixStatus] = useState<FixStatus>("idle")
 
     useEffect(() => {
         if (isRunning) {
@@ -47,5 +51,36 @@ export function useRun(API_BASE: string, projectId: string) {
         wsRef.current?.close();
     }, [API_BASE, projectId]);
 
-    return { isRunning, run, stop };
+    const fixWithAgent = useCallback(async (params: {
+        runId: string;
+        entry: string;
+        lang: "node" | "python";
+    }) => {
+        setFixStatus("fixing");
+
+        const res = await fetch(`${API_BASE}/agent/fix`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json"},
+            body: JSON.stringify({
+                project_id: projectId,
+                run_id: params.runId,
+                entry: params.entry,
+                lang: params.lang,
+            }),
+        });
+
+        const data = await res.json();
+
+        if (data.fixed) {
+            setFixStatus("fixed");
+        } else if (data.reason === "llm_unavailable") {
+            setFixStatus("llm_unavailable");
+        } else {
+            setFixStatus("not_fixed");
+        }
+
+        return data;
+    }, [API_BASE, projectId])
+
+    return { isRunning, run, stop, fixStatus, fixWithAgent };
 }

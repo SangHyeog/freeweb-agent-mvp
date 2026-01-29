@@ -1,6 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from app.api.project import router as project_router
 from app.api.run import router as run_router
 from app.api.run_ws import router as run_ws_router
@@ -31,7 +34,7 @@ app.include_router(stop_router)
 app.include_router(files_router)
 app.include_router(history_router)
 app.include_router(run_presets_router)
-app.include_router(agent_router, prefix="/agent")
+app.include_router(agent_router, prefix="")
 app.include_router(logs_router)
 #app.include_router(logs_sse_router)
 
