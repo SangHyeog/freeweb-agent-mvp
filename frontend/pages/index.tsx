@@ -15,9 +15,9 @@ import { useHistory } from "../hooks/useHistory";
 import { useRunSpec } from "../hooks/useRunSpec";
 import { useRunPresets } from "../hooks/useRunPresets";
 
-import { extractChangedLines } from "../utils/diff";
+import { collectHighlightLines } from "../utils/diff";
+import { FixStatus, FixMeta, ChangeBlock } from "../utils/types";
 import type { editor as MonacoEditorType } from "monaco-editor";
-import { difference } from "next/dist/build/utils";
 
 
 
@@ -58,7 +58,10 @@ export default function Home() {
   const [fixTarget, setFixTarget] = useState<string | undefined>();
   const [fixReason, setFixReason] = useState<string | undefined>();
   const [fixExplanation, setFixExplanation] = useState<string | undefined>();
-  const [fixStatus, setFixStatus] = useState<"idle" | "previewing" | "applying" | "applied" | "not_fixed" | "llm_unavailable">("idle");
+  const [fixStatus, setFixStatus] = useState<FixStatus>("idle");
+  const [fixMeta, setFixMeta] = useState<FixMeta | null>(null);
+  const [pendingBlocks, setPendingBlocks] = useState<ChangeBlock[] | null>(null);
+  const [lastErrorLine, setLastErrorLine] = useState<number | null>(null);
 
   const hasError = /ReferenceError|TypeError|SyntaxError|Error:|Traceback|ERR/i.test(output);
 
@@ -66,8 +69,7 @@ export default function Home() {
   const editorRef = useRef<MonacoEditorType.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<any>(null);
   const decorationsRef = useRef<string[]>([]);
-  const [pendingDiff, setPendingDiff] = useState<string | null>();
-
+  const hoverDecorationsRef = useRef<string[]>([]);
   
 
   const highlightOverlayStyle: React.CSSProperties = {
@@ -149,22 +151,39 @@ export default function Home() {
 
   //  highlight
   useEffect(() => {
-    if (!pendingDiff) return;
+    if (!pendingBlocks) return;
     if (!editorRef.current || !monacoRef) return;
 
     const model = editorRef.current.getModel();
     if (!model) return;
 
-    highlightChangedLines(pendingDiff);
-    setPendingDiff(null);
+    //  diff 기반 라인 추출
+    let lines = collectHighlightLines(pendingBlocks);
 
+    if (lines.length === 0) {
+      console.warn("[agent-fix] no highlight lines from blocks");
+      setPendingBlocks(null);
+      return;
+    }
+
+    highlightChangedLines(lines);
+    editorRef.current.revealLineInCenter(lines[0]);
+
+    setPendingBlocks(null);
   }, [files.code])
 
   //  prject change
   useEffect(() =>{
     clearFixHighlights();
   }, [projectId]);
-  
+
+  //  run 종료 시 저장
+  useEffect(() => {
+    const line = extractErrorLine(output);
+    if (line)
+      setLastErrorLine(line);
+  }, [output]);
+
   const onRun = () => {
     //  fix 상태 초기화
     setFixStatus("idle");
@@ -211,20 +230,35 @@ export default function Home() {
         }),
       });
 
-      const data = await res.json().catch(() => null);
-
       if (!res.ok) {
         // 서버가 quota/llm_error 같은 걸 detail에 넣는 경우가 많아서 분기
-        setFixStatus("llm_unavailable");
+        setFixStatus("failed");
         return;
       }
+
+      const data = await res.json().catch(() => null);
+      console.log("PREVIEW RESPONSE:", data);
 
       const patch = data.patches?.[0];
       const diff = patch?.diff_preview;
 
+      if (data.reason === "llm_diff_unavailable" || !diff) {
+        setFixStatus("manual_review");
+        setFixMeta(data.meta);
+        if (data.meta?.blocks) {
+          setPendingBlocks(data.meta.blocks);
+        } else {
+          setPendingBlocks(null);
+        }
+
+        setFixPreviewOpen(false);
+        return;
+      }
+
       //  diff 미리보기 상태 셋팅
       setFixDiff(diff);
       setFixTarget(patch?.target);
+      setFixMeta(data.meta);
       setFixReason(data.reason || data.meta?.failure_type);
       setFixExplanation(data.meta?.explanation);
 
@@ -234,7 +268,7 @@ export default function Home() {
       // 준비 완료 -> idle로 복귀(모달에서 apply/cancel)
       setFixStatus("idle");
     } catch (e) {
-      setFixStatus("llm_unavailable");
+      setFixStatus("failed");
     }
   } 
 
@@ -257,22 +291,15 @@ export default function Home() {
       });
       
       if (!res.ok){
-        setFixStatus("not_fixed");
+        setFixStatus("failed");
         return;
       }
 
       //  수정된 파일 다시 로드
       const newContent = await files.reloadFile("main.js");
 
-      setPendingDiff(fixDiff);
-
-      /*// 하이라이트표시
-      const lines = extractChangedLines(fixDiff, files.code);
-      highlightChangedLines(lines, fixDiff);
-
-      if (lines.length > 0 && editorRef.current) {
-        editorRef.current.revealLineInCenter(lines[0]);
-      }*/
+      const data = await res.json().catch(() => null);
+      setPendingBlocks(data.meta.blocks);
 
       //  상태 갱신
       setFixDiff(null);
@@ -280,7 +307,7 @@ export default function Home() {
       //  모달 닫기
       setFixPreviewOpen(false);
     } catch {
-      setFixStatus("not_fixed");
+      setFixStatus("failed");
     }
   }
 
@@ -301,7 +328,7 @@ export default function Home() {
       });
 
       if (!res.ok) {
-        setFixStatus("not_fixed");
+        setFixStatus("failed");
         return;
       }
 
@@ -313,7 +340,7 @@ export default function Home() {
       // ✅ 바로 Run 재실행
       onRun();   // ← 기존 Run 버튼과 동일한 함수
     } catch {
-      setFixStatus("not_fixed");
+      setFixStatus("failed");
     }
   }
 
@@ -328,29 +355,19 @@ export default function Home() {
     onRun();
   };
 
-  function highlightChangedLines(diff: string){
-    const monaco = monacoRef.current
-    if (!editorRef.current || !monaco) return;
+  function highlightChangedLines(lines: number[]) {
+    if (!editorRef.current || !monacoRef.current) return;
 
     const model = editorRef.current.getModel();
     if (!model) return;
 
-    //  diff에서 +라인 내용 추출
-    const addedContents = extractAddedContents(diff);
-    const decorations = [];
-
-    for (const content of addedContents) {
-      const line = findLineByContent(model, content);
-      if (!line) continue;
-
-      decorations.push({
-        range: new monaco.Range(line, 1, line, model.getLineMaxColumn(line)),
-        options: {
-          isWholeLine: true,
-          className: "agent-fix-line",
-        },
-      });
-    }
+    const decorations = lines.map((line) => ({
+      range: new monacoRef.current.Range(line, 1, line, model.getLineMaxColumn(line)),
+      options: {
+        isWholeLine: true,
+        className: "agent-fix-line",
+      },
+    }));
 
     decorationsRef.current = model.deltaDecorations(
       decorationsRef.current,
@@ -363,26 +380,32 @@ export default function Home() {
     }, 5000);*/
   }
 
-  function extractAddedContents(diff: string): string[] {
-    return diff
-      .split("\n")
-      .filter(l => l.startsWith("+") && !l.startsWith("+++"))
-      .map(l => l.slice(1).trim())
-      .filter(Boolean);
+  //  content 기반 위치 추정 함수
+  function findNearestLine(model: MonacoEditorType.ITextModel, content: string, around: number,): number | null {
+    const total = model.getLineCount();
+    let best: number | null = null;
+    let bestDist = Infinity;
+
+    for (let i = 1; i <= total; i++) {
+      if (model.getLineContent(i).includes(content)) {
+        const dist = Math.abs(i - around);
+        if (dist < bestDist) {
+          best = i;
+          bestDist = dist;
+        }
+      }
+    }
+    return best;
   }
 
-  function findLineByContent(model: MonacoEditorType.ITextModel, content: string): number | null {
-    const lineCount = model.getLinesContent();
-
-    for (let i = 1; i <= lineCount.length; i++) {
-      const line = model.getLineContent(i).trim();
-      if (line === content)  {
-        return i;
+  function extractAddedLineContents(diff: string): string | null {
+    for (const line of diff.split("\n")) {
+      if(line.startsWith("+") && !line.startsWith("+++")) {
+        return line.slice(1).trim();
       }
     }
     return null
   }
-
 
   function clearFixHighlights(){
     const editor = editorRef.current;
@@ -396,6 +419,89 @@ export default function Home() {
       []
     );
   }
+
+  function jumpToLine(line: number) {
+    if (!editorRef.current) return;
+
+    editorRef.current.revealLineInCenter(line);
+    editorRef.current.setPosition({
+      lineNumber: line,
+      column: 1,
+    });
+    editorRef.current.focus();
+  }
+
+  function jumpToError() {
+    if (!editorRef.current || !lastErrorLine) return;
+
+    editorRef.current.revealLineInCenter(lastErrorLine);
+    editorRef.current.setPosition({
+      lineNumber: lastErrorLine,
+      column: 1,
+    });
+  }
+
+  function extractErrorLine(output: string): number | null {
+    // 예: /app/main.js:3
+    const m = output.match(/\/app\/.+?:(\d+)/);
+    return m ? parseInt(m[1], 10) : null;
+  }
+
+  function openEditorHelp() {
+    if (!editorRef.current) return;
+
+    const model = editorRef.current.getModel();
+    if (!model) return;
+
+    const hint = `// TODO: 변수 선언 또는 값 확인 필요\n`;
+
+    model.applyEdits([
+      {
+        range: {
+          startLineNumber: 1,
+          startColumn: 1,
+          endLineNumber: 1,
+          endColumn: 1,
+        },
+        text: hint,
+      },
+    ]);
+
+    editorRef.current.focus();
+  }
+
+  function previewHoverLine(line: number | null) {
+    if (!editorRef.current || !monacoRef.current) return;
+
+    const model = editorRef.current.getModel();
+    if (!model) return;
+
+    // hover 해제
+    if (line == null) {
+      hoverDecorationsRef.current = model.deltaDecorations(
+        hoverDecorationsRef.current,
+        []
+      );
+      return;
+    }
+
+    hoverDecorationsRef.current = model.deltaDecorations(
+      hoverDecorationsRef.current,
+      [{
+        range: new monacoRef.current.Range(
+          line,
+          1,
+          line,
+          model.getLineMaxColumn(line)
+        ),
+        options: {
+          isWholeLine: true,
+          className: "agent-fix-hover-line",
+        },
+      }]
+    );
+  }
+
   
   return (
     <div style={{ height: "100%", display: "flex", fontFamily: "sans-serif" }}>
@@ -656,23 +762,43 @@ export default function Home() {
             fixStatus={fixStatus}
             onFixWithAgent={previewFix}
             onApplyAndRerun={onApplyAndRerun}
+            fixMeta={fixMeta}
+            onJumpToError={jumpToError}
+            onOpenEditorHelp={openEditorHelp}
           />
         </div>
       </div>
       <FixPreviewModal
         open={fixPreviewOpen}
-        diff={fixDiff}
+        mode={fixStatus === "manual_review" ? "manual_review" : "preview"}
+        blocks={fixMeta?.blocks}
         targetPath={fixTarget}
         reason={fixReason}
         explanation={fixExplanation}
+        applying={fixStatus === "applying"}
+
         onApply={applyFix}
         onApplyAndRun={applyAndRun}
         onCancel={() => {
           setFixPreviewOpen(false);
-          setFixDiff(null);
-          setFixStatus("idle");
+          previewHoverLine(null);   //  닫힐 때 hover 제거
+          //setFixDiff(null);
+          //setFixStatus("idle");
         }}
-        applying={fixStatus === "applying"}
+        onJumpToBlockLine={jumpToLine}
+        onHoverBlockLine={(blockId, lineIndex) => {
+          if (lineIndex == null) {
+            previewHoverLine(null);
+            return;
+          }
+
+          const block = fixMeta?.blocks?.[blockId];
+          const line =
+            block?.lines?.[lineIndex]?.newLine ??
+            block?.lines?.[lineIndex]?.oldLine;
+
+          if (line) previewHoverLine(line);
+        }}
       />
       <QuickOpen
         open={quickOpen}

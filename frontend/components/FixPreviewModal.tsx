@@ -1,20 +1,6 @@
-import React from "react";
-import { useState } from "react";
-
-
-type Props = {
-  open: boolean;
-  diff: string | null;
-  targetPath?: string;
-  reason?: string;
-  explanation?: string;
-
-  onApply: () => void;
-  onApplyAndRun: () => void;
-  onCancel: () => void;
-
-  applying?: boolean;
-};
+import React, { useEffect } from "react";
+import { useMemo, useState } from "react";
+import { ChangeBlock } from "../utils/types";
 
 const overlayStyle: React.CSSProperties = {
   position: "fixed",
@@ -45,68 +31,111 @@ const diffBoxStyle: React.CSSProperties = {
   background: "#fafafa",
 };
 
-function DiffLine({ line }: { line: string }) {
-  let style: React.CSSProperties = {
-    whiteSpace: "pre-wrap",
-    fontFamily: "monospace",
-    fontSize: 13,
-    padding: "0 6px",
-  };
+interface Props {
+  open: boolean;
+  mode: "preview" | "manual_review";
 
-  if (line.startsWith("+") && !line.startsWith("+++")) {
-    style.background = "#dcfce7"; // green-100
-    style.color = "#166534";      // green-800
-  } else if (line.startsWith("-") && !line.startsWith("---")) {
-    style.background = "#fee2e2"; // red-100
-    style.color = "#7f1d1d";      // red-800
-  } else if (line.startsWith("@@")) {
-    style.background = "#f3f4f6"; // gray-100
-    style.color = "#374151";
-    style.fontStyle = "italic";
-  }
+  blocks?: ChangeBlock[];
+  targetPath?: string;
+  reason?: string;
+  explanation?: string;
+  applying?: boolean;
 
-  return <div style={style}>{line}</div>;
+  onApply: () => void;
+  onApplyAndRun: () => void;
+  onCancel: () => void;
+
+  onJumpToBlockLine: (blockId: number, lineIndex: number) => void;
+  onHoverBlockLine?: (blockId: number, lineIndex: number | null) => void;
+};
+
+type PreviewRow = {
+  blockId: number;
+  lineIndex: number;
+  type: "add" | "del" | "context";
+  text: string,
+}
+
+function buildPreviewRows(blocks?: ChangeBlock[]): PreviewRow[] {
+  if (!blocks) return [];
+
+  const rows: PreviewRow[] = [];
+  blocks.forEach((block, blockId) => {
+    block.lines.forEach((line, lineIndex) => {
+      rows.push({
+        blockId,
+        lineIndex,
+        type: line.type,
+        text: line.content,
+      });
+    });
+  });
+
+  return rows;
 }
 
 
 export default function FixPreviewModal({
   open,
-  diff,
+  mode,
+  blocks,
   targetPath,
   reason,
   explanation,
+  applying,
   onApply,
   onApplyAndRun,
   onCancel,
-  applying
-}: Props) {
-  if (!open || !diff) return null;
+  onJumpToBlockLine,
+  onHoverBlockLine,
+ }: Props) {
 
   const [showAll, setShowAll] = useState(false);
   const [showReason, setShowReason] = useState(false);
 
-  const lines = diff.split("\n");
+  useEffect(() => {
+    if (!open) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onCancel();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open, onCancel]);
+
+  const rows = useMemo(() => buildPreviewRows(blocks), [[blocks]]);
+
+  if (!open) return null;
 
   return (
-    <div style={overlayStyle}>
-      <div style={modalStyle}>
+    <div style={overlayStyle} onClick={onCancel}>
+      <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
         {/* Header */}
-        <h3>🤖 Agent Fix Preview </h3>
+        <h3>
+          {mode === "preview" ? "🤖 Agent Fix Preview" : "🔍 Manual Review"}
+        </h3>
 
         {targetPath && (
-            <div style={{ fontSize: 12, marginBottom: 6 }}>
-                Target: <b>{targetPath}</b>
-            </div>
+          <div className="path" style={{ fontSize: 12, marginBottom: 6 }}>Target: {targetPath}</div>
         )}
-        
+
+        {reason && (
+          <div className="reason">Reason: {reason}</div>
+        )}
         {explanation && (
             <div style={{ 
                 background: "#f9fafb", 
                 border: "1px solid #e5e7eb", 
                 padding: 8, 
-                fontSize: 13, borderRadius: 4, marginBottom: 8,}}
+                fontSize: 13, borderRadius: 4, marginBottom: 8,
+              }}
             >
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                <div className="explanation" style={{ fontWeight: 600, marginBottom: 4 }}>
                     🤖 Why this fix?
                 </div>
                 <div>
@@ -129,32 +158,37 @@ export default function FixPreviewModal({
                 )}
             </div>
         )}
-        <button onClick={() => setShowAll((v) => !v)}
-            style={{ fontSize: 12, padding: "2px 8px", borderRadius: 4 }}
-        >
-            {showAll ? "Hide context": "Show full diff"}
-        </button>
+        
 
-        {/* Diff */}
-        <pre style={diffBoxStyle}>
-            {lines
-                .filter((line) => {
-                    if (showAll) return true;
-                    return (
-                        line.startsWith("+") ||
-                        line.startsWith("-") ||
-                        line.startsWith("@@")
-                    );
-                })
-                .map((line, idx) => (
-                    <DiffLine key={idx} line={line} />
-                ))
-            }
-        </pre>
+        <div className="preview" 
+          style={{ 
+            background: "#f9fafb", 
+            border: "1px solid #e5e7eb", 
+            padding: 8, 
+            fontSize: 13, borderRadius: 4, marginBottom: 8,
+          }}>
+          {rows.length === 0 && (
+            <div className="empty">No preview available</div>
+          )}
 
-        {/* Actions */}
-        <div
-          style={{
+          {rows.map((r, i) => (
+            <div
+              key={i}
+              className={`row ${r.type}`}
+              style={{cursor: "pointer"}}
+              onClick={() => onJumpToBlockLine(r.blockId, r.lineIndex)}
+              onMouseEnter={() => onHoverBlockLine?.(r.blockId, r.lineIndex)}
+              onMouseLeave={() => onHoverBlockLine?.(r.blockId, null)}
+            >
+              <span className="prefix">
+                {r.type === "add" ? "+" : r.type === "del" ? "-" : " "}
+              </span>
+              <span className="text">{r.text}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="actions" style={{
             padding: "12px 16px",
             borderTop: "1px solid #ddd",
             display: "flex",
@@ -162,34 +196,32 @@ export default function FixPreviewModal({
             gap: 8,
           }}
         >
-          <button onClick={onCancel} disabled={applying}>Cancel</button>
-          <button
-            onClick={onApply}
-            disabled={!diff || applying}
-            style={{
-              background: "#2563eb",
-              color: "#fff",
-              border: "none",
-              padding: "6px 12px",
-              borderRadius: 4,
-              cursor: diff ? "pointer" : "not-allowed",
-            }}
-          >
-            Apply Fix
+          <button onClick={onCancel} disabled={applying}>
+            Cancel
           </button>
-          <button
-            onClick={onApplyAndRun}
-            disabled={!diff || applying}
-            style={{
-            background: "#2563eb",
-            color: "#fff",
-            border: "none",
-            padding: "6px 12px",
-            borderRadius: 4,
-            }}
-        >
-            Apply & Re-run
-        </button>
+          {mode === "preview" && (
+            <>
+              <button onClick={onApply} disabled={applying} style={{
+                background: "#2563eb",
+                color: "#fff",
+                border: "none",
+                padding: "6px 12px",
+                borderRadius: 4,
+                cursor: "pointer",
+              }}>
+                Apply
+              </button>
+              <button onClick={onApplyAndRun} disabled={applying} style={{
+                background: "#2563eb",
+                color: "#fff",
+                border: "none",
+                padding: "6px 12px",
+                borderRadius: 4,
+              }}>
+                Apply & Run
+              </button>
+            </>  
+          )} 
         </div>
       </div>
     </div>

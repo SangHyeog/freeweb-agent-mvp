@@ -1,0 +1,5 @@
+.fix-preview { font-family: monospace; }
+.row { cursor: pointer; white-space: pre; }
+.row.add { background: #e6fffa; }
+.row.del { background: #ffe6e6; }
+.row.context { background: #f7f7f7; }

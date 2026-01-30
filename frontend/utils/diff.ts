@@ -1,39 +1,55 @@
-// frontend/utils/diff.ts
-
-import { read, readlink } from "fs";
+import { ChangeBlock, PreviewRow } from "./types";
 
 /**
- * Extract added line numbers from unified diff
- * Returns 1-based line numbers
+ * ChangeBlock[] -> PreviewRow[]
+ * preview는 실제 파일 라인번호를 모른다 (가상 좌표계)
  */
-export function extractChangedLines(diff: string, code: string): number[] {
-    const result: number[] = [];
-    const diffLines = diff.split("\n");
+export function blocksToPreviewRows(blocks: ChangeBlock[]): PreviewRow[] {
+    const rows: PreviewRow[] = [];
 
-    let newLine = 0;
+    blocks.forEach((block, blockId) => {
+        block.lines.forEach((line, lineIndex) => {
+            rows.push({
+                blockId,
+                lineIndex,
+                type: line.type,
+                text: line.content,
+            });
+        });
+    });
 
-    const hunkRegx = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+    return rows;
+}
 
-    for (const line of diffLines) {
-        //  hunk header
-        const m = line.match(hunkRegx);
-        if (m) {
-            newLine = parseInt(m[1], 10);
-            continue;
-        }
+/**
+ * preview 클릭 시 jump 대상 라인 계산
+ * - add -> newLine
+ * - del -> oldLine
+ * - context -> newLine ?? oldLine
+ */
+export function getJumpTarget(blocks: ChangeBlock[], blockId: number, lineIndex: number): number | null {
+    const block = blocks[blockId];
+    if (!block) return null;
 
-        // added line (new file 기준)
-        if (line.startsWith("+") && !line.startsWith("+++")) {
-            result.push(newLine);
-            newLine += 1
-            continue;
-        }
+    const line = block.lines[lineIndex];
+    if (!line) return null;
 
-        // context line (공통)
-        if (line.startsWith(" ")) {
-            newLine += 1;
-        }
-        //  removed line (-)는 new file에 없으므로 증가 안함.
-    }
-    return result;
+    return line.newLine ?? line.oldLine ?? null;
+}
+
+/**
+ * apply 후 highlight 대상 라인 계산 (newLine 기준)
+ */
+export function collectHighlightLines(blocks: ChangeBlock[]): number[] {
+    const lines: number[] = [];
+
+    blocks.forEach((block) => {
+        block.lines.forEach((line) => {
+            if (line.type === "add" && typeof line.newLine === "number") {
+                lines.push(line.newLine);
+            }
+        });
+    });
+
+    return lines;
 }

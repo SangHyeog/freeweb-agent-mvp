@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple
 
 from app.agent.llm.prompts import SYSTEM_PROMPT_DIFF_ONLY
 from app.agent.llm.diff_guard import normalize_diff, validate_unified_diff
@@ -40,31 +40,39 @@ def load_llm_config() -> LLMConfig:
     )
 
 
-def generate_fix_diff(*, error_log: str, files: list[dict]) -> str:
+def generate_fix_diff(*, error_log: str, files: list[dict]) -> Tuple[Optional[str], bool]:
+    """
+    Returns:
+      diff: unified diff string or None
+      estimated: True if fallback / heuristic was used
+    """
     cfg = load_llm_config()
 
     try:
         if cfg.provider == "anthropic":
-            return _anthropic_generate_diff(
+            diff =  _anthropic_generate_diff(
                 cfg,
                 error_log=error_log,
                 files=files,
             )
+            return diff, False
 
         if cfg.provider == "openai":
-            return _openai_generate_diff(
+            diff = _openai_generate_diff(
                 cfg,
                 error_log=error_log,
                 files=files,
             )
+            return diff, False
 
         if cfg.provider == "gemini":
-            return _gemini_generate_diff(
+            diff = _gemini_generate_diff(
                 cfg,
                 error_log=error_log,
                 files=files,
             )
-
+            return diff, False
+            
         raise LLMError(f"Unsupported LLM_PROVIDER={cfg.provider}")
 
     except Exception as e:
@@ -89,16 +97,17 @@ def generate_fix_diff(*, error_log: str, files: list[dict]) -> str:
             and "test1 is not defined" in error_log
             and "console.log(test1" in f["content"]["content"]
         ):
-            return (
+            diff = (
                 f"--- a/{f['path']}\n"
                 f"+++ b/{f['path']}\n"
                 f"@@ -2,1 +2,1 @@\n"
                 f"-console.log(test1);\n"
                 f"+console.log(\"test1\");\n"
             )
-
-    # fallback도 못하면, 그때 실패 반환
-    raise LLMError(f"LLM failed and no fallback matched: {llm_error_msg}")
+            return diff, True
+        
+    # preview 단계에서는 빈 diff라도 반환
+    return None, True   # True = estimated
 
 
 def _build_files_block(files: list[dict]) -> str:

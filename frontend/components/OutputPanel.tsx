@@ -1,6 +1,8 @@
+import { BlockList } from "net";
 import { useEffect, useRef } from "react";
 
-type FixStatus = "idle" | "previewing" | "applying" | "applied" | "not_fixed" | "llm_unavailable";
+import { FixStatus, FixMeta } from "../utils/types";
+import FixManualReviewHint from "./FixManualReviewHint";
                  
 
 type Props = {
@@ -13,10 +15,19 @@ type Props = {
     fixStatus: FixStatus;
     onFixWithAgent: () => void;
     onApplyAndRerun: () => void;
+    fixMeta?: FixMeta | null;
+    onJumpToError?: () => void;
+    onOpenEditorHelp?: () => void;
 };
 
 
-export default function OutputPanel ({ output, autoScroll, setAutoScroll, setOutput, canFix, fixStatus, onFixWithAgent, onApplyAndRerun }: Props) {
+export default function OutputPanel (props: Props) {
+    const {output, 
+      autoScroll, setAutoScroll, setOutput, canFix, fixStatus, 
+      onFixWithAgent, onApplyAndRerun, 
+      fixMeta, 
+      onJumpToError, onOpenEditorHelp 
+    } = props;
     const ref = useRef<HTMLPreElement | null>(null);
 
     useEffect(() => {
@@ -37,8 +48,27 @@ export default function OutputPanel ({ output, autoScroll, setAutoScroll, setOut
               <button onClick={() => { navigator.clipboard.writeText(output) }}>
                 Copy
               </button>
-
               {/* 🤖 Fix with Agent */}
+              {fixMeta?.estimated && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span
+                    style={{
+                      background: "#fde68a",
+                      color: "#92400e",
+                      fontSize: 11,
+                      padding: "2px 6px",
+                      borderRadius: 4,
+                      fontWeight: 600,
+                    }}
+                  >
+                    위치 추정
+                  </span>
+                  <span style={{ color: "#f59e0b", fontSize: 12 }}>
+                    📍 자동 수정이 어려워 위치를 추정해 표시했습니다
+                  </span>
+                </div>
+              )}
+
               {canFix && onFixWithAgent && fixStatus === "idle" && (
                 <button
                   onClick={onFixWithAgent}
@@ -52,10 +82,6 @@ export default function OutputPanel ({ output, autoScroll, setAutoScroll, setOut
                 >
                   🤖 Fix with Agent
                 </button>
-              )}
-
-              {fixStatus === "previewing" && (
-                <span>🤖 Preparing preview…</span>
               )}
 
               {fixStatus === "applying" && <span>🤖 Applying fix…</span>}
@@ -73,19 +99,13 @@ export default function OutputPanel ({ output, autoScroll, setAutoScroll, setOut
                   ▶ Apply & Re-run
                 </button>
               )}
-
-              {fixStatus === "not_fixed" && (
-                <span style={{ color: "orange" }}>
-                  ⚠️ Could not fix automatically
-                </span>
+              {fixStatus === "manual_review" && (
+                <FixManualReviewHint 
+                  blocks={fixMeta?.blocks}
+                  failureType={fixMeta?.failure_type}
+                  explanation={fixMeta?.explanation}
+                />
               )}
-
-              {fixStatus === "llm_unavailable" && (
-                <span style={{ color: "orange" }}>
-                  🤖 Agent unavailable
-                </span>
-              )}
-
               <label style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
                 <input type="checkbox" checked={autoScroll} onChange={(e) => setAutoScroll(e.target.checked)} /> 
                 Auto-scroll

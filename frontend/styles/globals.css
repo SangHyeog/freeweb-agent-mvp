@@ -50,5 +50,17 @@ a {
 }
 
 .agent-fix-line {
-  background-color: rgba(134, 239, 172, 0.6); /* green-300 */
+  background-color: #dcfce7;
+  animation: fixFade 1.5s ease-in-out forwards;
+  animation-delay: 3s;
+}
+
+@keyframes fixFade {
+  to {
+    background-color: transparent;
+  }
+}
+
+.agent-fix-hover-line {
+  background-color: rgba(59, 130, 246, 0.15);
 }

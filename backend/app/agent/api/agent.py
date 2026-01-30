@@ -9,6 +9,9 @@ from app.agent.core.fix_orchestrator import AgentFixOrchestrator
 from app.agent.validator import validate_tool_call
 from app.agent.runner import run_tool
 
+from app.agent.tools.diff.preview import preview_fix
+from app.agent.tools.diff.apply import apply_fix
+
 router = APIRouter()
 orch = SimpleAgentOrchestrator()
 fix_orch = AgentFixOrchestrator()

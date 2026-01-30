@@ -22,68 +22,141 @@ def _safe_file(root: Path, rel_path: str) -> Path:
     return p
 
 
-def apply_unified_diff(input: dict):
-    project_id = input["project_id"]
-    diff_text = input["diff"]
-    dry_run = input.get("dry_run", False)
-
+def apply_unified_diff_pure(*, project_id: str, diff_text: str, dry_run: bool = False, file_path: str | None = None,) -> dict:
+    """
+    Context-free unified diff apply.
+    - run_id/step_id/logging 없음
+    - diff를 project sandbox 내부 파일에 적용
+    - 충돌(conflict)은 None 반환으로 감지 (기존 로직 유지)
+    """
     root = _project_root(project_id)
 
     patches = _parse_unified_diff(diff_text)
+    if not patches:
+        return {"applied": [], "conflicts": [{"file": None, "reason": "No patches parsed from diff"}]}
+
     applied = []
     conflicts = []
 
     for patch in patches:
         rel_path = patch["path"]
-        target = _safe_file(root, rel_path)
+        hunks = patch["hunks"]
 
-        if not target.exists():
+        # (선택) 호출자가 file_path를 넘겼다면, diff의 path와 일치하는지 검증
+        if file_path is not None and rel_path != file_path:
             conflicts.append({
-                "path": rel_path,
-                "reason": "file_not_found"
+                "file": rel_path,
+                "reason": f"file_path mismatch: arg={file_path}, diff={rel_path}",
             })
             continue
-
+        
+        target = _safe_file(root, rel_path)
+        if not target.exists():
+            conflicts.append({
+                "file": rel_path,
+                "reason": "Target file does not exist",
+            })
+            continue
+        
         original = target.read_text(encoding="utf-8").splitlines(keepends=True)
-        patched = _apply_patch(original, patch["hunks"])
+
+        # 1) 정석 hunk 적용
+        patched = _apply_patch(original, hunks)
+
+        # 2) 실패 시 fallback
+        if patched is None:
+            patched = _fallback_simple_replace(original, hunks)
 
         if patched is None:
-            fallback = _fallback_simple_replace(original, patch["hunks"])
-
-            if fallback is not None:
-                patched = fallback
-            else:
-                conflicts.append({
-                    "path": rel_path,
-                    "reason": "hunk_failed"
-                })
-                continue
+            conflicts.append({
+                "file": rel_path,
+                "reason": "Patch conflict: hunk context mismatch",
+            })
+            continue
 
         if not dry_run:
             target.write_text("".join(patched), encoding="utf-8")
 
         applied.append({
-            "path": rel_path,
-            "status": "modified"
+            "file": rel_path,
+            "dry_run": dry_run,
+            "changed": original != patched,
+            "hunks": len(hunks),
         })
-    
-    return (
-        {
-            "applied": applied,
-            "conflicts": conflicts,
-            "dry_run": dry_run
-        },
-        [
-            {
-                "type": "diff",
-                "files": [p["path"] for p in applied],
-                "dry_run": dry_run
-            }
-        ]
+
+    return {"applied": applied, "conflicts": conflicts}
+
+
+def apply_unified_diff(input: dict):
+    """
+    LEGACY ADAPTER (호환용)
+    - context/run_id/step_id는 읽지 않는다 (완전 제거)
+    - file_path가 없으면 diff header에서 추론한다
+    """
+    diff_text = input["diff"]
+
+    fp = input.get("file_path")
+    if fp is None:
+        fp = _infer_file_path(diff_text)
+
+    out = apply_unified_diff_pure(
+        project_id=input["project_id"],
+        diff_text=diff_text,
+        dry_run=input.get("dry_run", False),
+        file_path=fp,  # 검증 겸용
     )
+    return out, None
 
 
 # ---------- internals ----------
+def _infer_file_path(diff_text: str) -> str:
+    """
+    unified diff 텍스트에서 대상 file_path를 추론한다.
+
+    현재는 single-file diff만 허용한다.
+    multi-file diff인 경우 ValueError 발생.
+    """
+
+    old_paths = []
+    new_paths = []
+
+    for line in diff_text.splitlines():
+        if line.startswith("--- "):
+            path = line[4:].strip()
+            if path != "/dev/null":
+                old_paths.append(_normalize_diff_path(path))
+
+        elif line.startswith("+++ "):
+            path = line[4:].strip()
+            if path != "/dev/null":
+                new_paths.append(_normalize_diff_path(path))
+
+    paths = set(old_paths + new_paths)
+
+    if not paths:
+        raise ValueError("Cannot infer file path: no diff file header found")
+
+    if len(paths) > 1:
+        raise ValueError(
+            f"Multi-file diff is not supported yet: {paths}"
+        )
+
+    return paths.pop()
+
+
+def _normalize_diff_path(path: str) -> str:
+    """
+    a/foo.py, b/foo.py → foo.py
+    """
+
+    # git diff 형식
+    if path.startswith("a/") or path.startswith("b/"):
+        return path[2:]
+
+    return path
+
+
+
 def _parse_unified_diff(diff_text: str) -> List[dict]:
     """
     Very small unified diff parser

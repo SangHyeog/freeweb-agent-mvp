@@ -19,7 +19,7 @@ class AgentFixRequest(BaseModel):
 class AgentPatchApplied(BaseModel):
     kind: Literal["write_file", "apply_unified_diff"]
     target: str
-    note: str
+    note: Optional[str] = None
     diff_preview: Optional[str] = None
 
 
@@ -29,8 +29,9 @@ class AgentFixResponse(BaseModel):
     run_id: str
     fixed: bool
     reason: str
-    patches: List[AgentPatchApplied] = []
+    patches: List[AgentPatchApplied] = Field(default_factory=list)
     suggested_next: Literal["return", "manual_review", "give_up", "confirm_apply", "apply_and_rerun"] = "manual_review"
-    meta: Dict[str, Any] = {}
+    meta: Dict[str, Any] = Field(default_factory=dict)
+
 
 

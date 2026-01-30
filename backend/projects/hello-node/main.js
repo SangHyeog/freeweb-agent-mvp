@@ -1,3 +1,2 @@
-const { getValue } = require("./util");
-
-console.log("test1");
+const x = getValue();
+console.log(x);

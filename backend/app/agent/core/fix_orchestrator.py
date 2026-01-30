@@ -7,8 +7,11 @@ from app.agent.core.classifier import classifier_failure, FailureType
 from app.agent.llm.prompts import build_diff_only_prompt
 
 from app.agent.tools.fs import read_file_tool, write_file_tool
-#from app.agent.tools.logs import find_log, find_log_by_run_id, parse_log
-from app.agent.tools.patch import apply_unified_diff
+from app.agent.tools.logs import find_log, find_log_by_run_id, parse_log
+#from app.agent.tools.patch import apply_unified_diff
+from app.utils.diff.parse_unified import parse_unified_diff
+from app.utils.diff.estimate_blocks import estimate_blocks_from_error
+from app.agent.tools.diff.apply import apply_fix as apply_diff_tool
 from app.agent.llm.client import generate_fix_diff
 from app.agent.llm.errors import LLMInvalidDiffError, LLMError
 from app.services.history_service import get_run
@@ -29,9 +32,30 @@ def validate_unified_diff(diff: str) -> None:
         raise ValueError("Invalid diff: missing hunk header")
     if diff.count("@@") %2 != 0:
         raise ValueError("Invalid diff: broken hunk")
-        
+    
+
+def _build_blocks_from_diff_or_estimate(diff: str | None, ctx: FixContext, estimated: bool,) -> list | None:
+    if diff:
+        return parse_unified_diff(diff, ctx.entry)
+
+    if estimated:
+        # 🔥 여기서 위치 추정 blocks 생성
+        # (지금은 entry 전체 or error line 기준으로 만들어도 OK)
+        return estimate_blocks_from_error(
+            file_path=ctx.entry,
+            file_content=ctx.entry_content,
+            stderr=ctx.stderr,
+            lang=ctx.lang,
+        )
+
+    return None
+
+
 class AgentFixOrchestrator:
     def  preview_fix(self, req: AgentFixRequest) -> AgentFixResponse:
+        FORCE_PREVIEW_DIFF = True   # ⚠️ 테스트 동안만
+        estimated = False   # LLM 정상 응답으로 diff 생성, True : 실패,
+
         # 1. history에서 run 로드
         run = get_run(req.project_id, req.run_id)
         if not run:
@@ -97,45 +121,91 @@ class AgentFixOrchestrator:
         # 5. LLM diff preview (❗ apply 안 함)
         if ftype.kind in ("llm_diff", "unknown"):
             try:
-                diff = generate_fix_diff(
+                diff, estimated = generate_fix_diff(
                     error_log=stderr,
                     files=[{
                         "path": ctx.entry,
                         "content": ctx.entry_content,
                     }],
                 )
-            except (LLMInvalidDiffError, LLMError):
+            except Exception:
+                diff = ""
+
+            if FORCE_PREVIEW_DIFF:
+                fake_diff = (
+                    f"diff --git a/main.js b/main.js\n"
+                    f"index 0000000..1111111 100644\n"
+                    f"--- a/main.js\n"
+                    f"+++ b/main.js\n"
+                    f"@@ -1,2 +1,3 @@\n"
+                    f"+const x = getValue();\n"
+                    f" console.log(x);\n"
+                )
+                blocks = parse_unified_diff(fake_diff, ctx.entry)
                 return AgentFixResponse(
-                    ok=False,
+                    ok=True,
                     project_id=req.project_id,
                     run_id=req.run_id,
                     fixed=False,
-                    reason="llm_failed",
+                    reason="preview_forced",
+                    patches=[
+                        AgentPatchApplied(
+                            kind="apply_unified_diff",
+                            target="main.js",
+                            diff_preview=fake_diff,
+                        )
+                    ],
+                    meta={
+                        "blocks": blocks,
+                        "explanation": "LLM quota exceeded - forced preview diff for UI testing",
+                    },
+                    suggested_next="confirm_apply",
                 )
+            else:    
+                blocks = _build_blocks_from_diff_or_estimate(diff, ctx, estimated)
 
-            return AgentFixResponse(
-                ok=True,
-                project_id=req.project_id,
-                run_id=req.run_id,
-                fixed=False,
-                reason="llm_diff_preview",
-                patches=[
-                    AgentPatchApplied(
-                        kind="apply_unified_diff",
-                        target=ctx.entry,
-                        note="LLM generated unified diff (preview)",
-                        diff_preview=diff,
+                if not diff:
+                    return AgentFixResponse(
+                        ok=True,
+                        project_id=req.project_id,
+                        run_id=req.run_id,
+                        fixed=False,
+                        reason="llm_diff_unavailable",
+                        patches=[],
+                        meta={
+                            "failure_type": ftype.name,
+                            "blocks": blocks,
+                            "estimated": True,
+                            "explanation": "Unable to generate a reliable diff automatically."
+                        },
+                        suggested_next="manual_review",
                     )
-                ],
-                suggested_next="confirm_apply",
-                meta={
-                    "failure_type": ftype.name,
-                    "explanation": (
-                        "The error occurs because `test1` is not defined. "
-                        "The fix replaces it with a string literal."
-                    )
-                },
-            )
+
+                return AgentFixResponse(
+                    ok=True,
+                    project_id=req.project_id,
+                    run_id=req.run_id,
+                    fixed=False,
+                    reason="llm_diff_preview",
+                    patches=[
+                        AgentPatchApplied(
+                            kind="apply_unified_diff",
+                            target=ctx.entry,
+                            note="generated by fallback" if estimated else None,
+                            diff_preview=diff,
+                        )
+                    ],
+                    meta={
+                        "failure_type": ftype.name,
+                        "blocks": blocks,
+                        "estimated": estimated,
+                        "explanation": (
+                            "The error occurs because `test1` is not defined. "
+                            "The fix replaces it with a string literal."
+                        )
+                    },
+                    suggested_next="confirm_apply",
+                )
         
         return AgentFixResponse(
             ok=True,
@@ -146,34 +216,53 @@ class AgentFixOrchestrator:
             suggested_next="manual_review",
         )
         
-    def apply_fix(self, req: AgentFixRequest) -> AgentFixResponse:
+    def apply_fix(self, req: AgentFixApplyRequest) -> AgentFixResponse:
         print("RECEIVED DIFF:\n", req.diff)
         validate_unified_diff(req.diff)
 
-        patch_out, _ = apply_unified_diff({
-            "project_id": req.project_id,
-            "diff": req.diff,
-            "dry_run": False,
-            "run_id": req.run_id,
-            "step_id": "fix_apply",
-        })
+        # Agent step id는 orchestration 레벨에서 결정
+        step_id = "fix_apply"
+        
+        # 1️. 실제 diff apply + ChangeBlock 생성
+        out = apply_diff_tool(
+            project_id=req.project_id,
+            diff_text=req.diff,
+            run_id=req.run_id,
+            step_id=step_id,
+            dry_run=False,
+        )
 
-        if patch_out.get("conflicts"):
-            return AgentFixResponse(
-                ok=False,
-                project_id=req.project_id,
-                run_id=req.run_id,
-                fixed=False,
-                reason="patch_conflict",
+        patch = out["patch"]
+        blocks = out["blocks"]
+
+        # 2. AgentPatchApplied 기록 (기존 schema 유지)
+        patches = [
+            AgentPatchApplied(
+                kind="apply_unified_diff",
+                target="project",
+                note="Applied unified diff via agent",
+                diff_preview=req.diff,
             )
+        ]
 
+        # 3️. 성공 / 실패 판단
+        fixed = len(patch.get("conflicts", [])) == 0
+
+        # 4️. AgentFixResponse 구성
         return AgentFixResponse(
             ok=True,
             project_id=req.project_id,
             run_id=req.run_id,
-            fixed=True,
-            reason="fix_applied",
-            suggested_next="apply_and_rerun",
+            fixed=fixed,
+            reason="diff applied" if fixed else "patch conflict",
+            patches=patches,
+            suggested_next="return" if fixed else "manual_review",
+
+            # Day25 핵심 데이터는 meta에
+            meta={
+                "patch": patch,
+                "blocks": blocks,   # ← preview / jump / highlight 기준
+            },
         )
 
 
@@ -313,16 +402,35 @@ class AgentFixOrchestrator:
         except LLMError:
             return patches
 
-        patch_out, _ = apply_unified_diff({
-            "project_id": ctx.project_id,
-            "diff": diff,
-            "dry_run": False,
-            "run_id": ctx.run_id,
-            "step_id": "fix_llm_patch",
-        })
+        step_id = "fix_llm_pathch"
 
-        if patch_out.get("conflicts"):
-            return patches
+        out = apply_diff_tool(
+            project_id=ctx.project_id,
+            diff_text=diff,
+            run_id=ctx.run_id,
+            step_id=step_id,
+            dry_run=False,
+        )
+
+        patch = out["patch"]
+        blocks = out["blocks"]
+
+        patch = out["patch"]
+        blocks = out["blocks"]
+
+        # 2. AgentPatchApplied 기록 (기존 schema 유지)
+        patches = [
+            AgentPatchApplied(
+                kind="apply_unified_diff",
+                target=ctx.entry,
+                note="Applied LLM unified diff",
+                diff_preview=diff,
+            )
+        ]
+
+        # 3️. 성공 / 실패 판단
+        fixed = len(patch.get("conflicts", [])) == 0
+
 
         patches.append(AgentPatchApplied(
             kind="apply_unified_diff",
@@ -331,7 +439,22 @@ class AgentFixOrchestrator:
             diff_preview=diff[:500],
         ))
 
-        return patches
+        return AgentFixResponse(
+            ok=True,
+            project_id=ctx.project_id,
+            run_id=ctx.run_id,
+            fixed=fixed,
+            reason="diff applied" if fixed else "patch conflict",
+            patches=patches,
+            suggested_next="return" if fixed else "manual_review",
+
+            # Day25 핵심 데이터는 meta에
+            meta={
+                "patch": patch,
+                "blocks": blocks,   # ← preview / jump / highlight 기준
+            },
+        )
+
 
     def _extract_unified_diff(self, text: str) -> Optional[str]:
         """
