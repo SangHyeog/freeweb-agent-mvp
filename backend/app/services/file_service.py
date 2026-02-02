@@ -4,6 +4,23 @@ from app.core.config import PROJECTS_DIR, DEFAULT_PROJECT_ID
 from app.services.path_service import safe_join
 
 
+HIDDEN_DIR_RULES = [
+    lambda p: p.name.startswith("."),       # .agent_backup, .git, .env
+    lambda p: p.name in {"node_modules"},
+    lambda p: p.name == "__pycache__",
+    lambda p: p.name.endswith("_cache"),
+]
+
+def is_hidden_path(path: Path) -> bool:
+    for rule in HIDDEN_DIR_RULES:
+        try:
+            if rule(path):
+                return True
+        except Exception:
+            pass
+    return False
+    
+
 def _get_project_root(project_id: str | None) -> Path:
     pid = project_id or DEFAULT_PROJECT_ID
 
@@ -30,6 +47,9 @@ def list_files(project_id: str | None = None) -> List[Dict]:
 
     def walk(dir_path: Path):
         for p in sorted(dir_path.iterdir(), key=lambda x: (x.is_file(), x.name.lower())):
+            if is_hidden_path(p):
+                continue
+
             rel = str(p.relative_to(root)).replace("\\", "/")
             if p.is_dir():
                 items.append({"path": rel, "type": "dir"})

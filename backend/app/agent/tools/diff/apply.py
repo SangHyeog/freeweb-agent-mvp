@@ -1,6 +1,6 @@
 from typing import Dict, Any
 
-from app.runtime.patch import apply_unified_diff_pure
+from app.runtime.patch import apply_unified_diff
 from app.utils.diff.parse_unified import parse_unified_diff
 
 # 네 프로젝트에 이미 있는 trace / run history 유틸을 사용하면 되고,
@@ -12,7 +12,8 @@ from app.services.run_log import (
 )
 
 
-def apply_fix(*, project_id: str, diff_text: str, run_id: str, step_id: str, dry_run: bool = False, file_path: str | None = None,) -> Dict[str, Any]:
+#def apply_fix(*, project_id: str, diff_text: str, run_id: str, step_id: str, dry_run: bool = False, file_path: str | None = None,) -> Dict[str, Any]:
+def apply_fix(*, project_id: str, diff_text: str, run_id: str, step_id: str, dry_run: bool = False,) -> Dict[str, Any]:
     """
     Agent-level apply tool.
 
@@ -34,17 +35,19 @@ def apply_fix(*, project_id: str, diff_text: str, run_id: str, step_id: str, dry
 
     try:
         # 2. runtime (context-free) 호출
-        patch_out = apply_unified_diff_pure(
-            project_id=project_id,
-            diff_text=diff_text,
-            dry_run=dry_run,
-            file_path=file_path,  # 있으면 검증용, 없어도 동작
-        )
+        patch_out, _ = apply_unified_diff({
+            "project_id": project_id,
+            "diff": diff_text,
+            "dry_run": dry_run,
+            "run_id": run_id,
+            "step_id": step_id,
+            #file_path=file_path,  # 있으면 검증용, 없어도 동작
+        })
 
         # 3. Day25 핵심: diff → ChangeBlock
         blocks = parse_unified_diff(
             diff_text=diff_text,
-            file_path=file_path or "<inferred>",
+            default_file_path="<applied>",
         )
 
         result = {
@@ -66,7 +69,7 @@ def apply_fix(*, project_id: str, diff_text: str, run_id: str, step_id: str, dry
         return result
 
     except Exception as e:
-        # 5️⃣ step 에러 기록 (Agent 책임)
+        # 5️. step 에러 기록 (Agent 책임)
         step_error(
             run_id=run_id,
             step_id=step_id,

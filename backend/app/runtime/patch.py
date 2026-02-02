@@ -1,13 +1,64 @@
 # LLM이 만든 diff를 “최소 변경 단위”로, project sandbox 안에서, 충돌 감지하면서 안전하게 적용
 
 from pathlib import Path
-from typing import List, Dict
-import difflib
+from typing import List
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = BASE_DIR / "projects"
 
+# ==========================================================
+# Legacy adapter (호환용)
+# ==========================================================
+def apply_unified_diff(input: dict):
+    """
+    LEGACY ADAPTER
+    - 기존 호출부 호환용
+    - 내부적으로 pure 함수만 호출
+    """
+    out = apply_unified_diff_pure(
+        project_id=input["project_id"],
+        diff_text=input["diff"],
+        dry_run=input.get("dry_run", False),
+    )
+    return out, None
 
+
+# ==========================================================
+# Pure entrypoint (single + multi-file 통합)
+# ==========================================================
+def apply_unified_diff_pure(*, project_id: str, diff_text: str, dry_run: bool = False) -> dict:
+    """
+    Multi-file unified diff apply.
+    - diff_text 내부의 각 file patch를 path 기준으로 적용한다.
+    - 충돌은 파일 단위로 reports
+    """
+    root = _project_root(project_id)
+    patches = _parse_unified_diff(diff_text)
+
+    applied = []
+    conflicts = []
+
+    for patch in patches:
+        rel_path = patch["path"]
+        hunks = patch["hunks"]
+
+        try:
+            result = _apply_single_file_patch(
+                root=root,
+                rel_path=rel_path,
+                hunks=hunks,
+                dry_run=dry_run,
+            )
+            applied.append(result)
+
+        except Exception as e:
+            conflicts.append({
+                "file": rel_path,
+                "reason": str(e),
+            })
+    return {"applied": applied, "conflicts": conflicts}
+
+# ---------- internals ----------
 def _project_root(project_id: str) -> Path:
     root = (PROJECT_ROOT / project_id).resolve()
     if not root.exists():
@@ -22,126 +73,53 @@ def _safe_file(root: Path, rel_path: str) -> Path:
     return p
 
 
-def apply_unified_diff_pure(*, project_id: str, diff_text: str, dry_run: bool = False, file_path: str | None = None,) -> dict:
+# runtime 전용: diff를 실제 파일에 적용하기 위한 내부 파서
+def _parse_unified_diff(diff_text: str) -> List[dict]:
     """
-    Context-free unified diff apply.
-    - run_id/step_id/logging 없음
-    - diff를 project sandbox 내부 파일에 적용
-    - 충돌(conflict)은 None 반환으로 감지 (기존 로직 유지)
+    Minimal unified diff parser
+    - file-level split
+    - hunks per file
     """
-    root = _project_root(project_id)
+    lines = diff_text.splitlines()
+    patches = []
 
-    patches = _parse_unified_diff(diff_text)
-    if not patches:
-        return {"applied": [], "conflicts": [{"file": None, "reason": "No patches parsed from diff"}]}
-
-    applied = []
-    conflicts = []
-
-    for patch in patches:
-        rel_path = patch["path"]
-        hunks = patch["hunks"]
-
-        # (선택) 호출자가 file_path를 넘겼다면, diff의 path와 일치하는지 검증
-        if file_path is not None and rel_path != file_path:
-            conflicts.append({
-                "file": rel_path,
-                "reason": f"file_path mismatch: arg={file_path}, diff={rel_path}",
-            })
-            continue
-        
-        target = _safe_file(root, rel_path)
-        if not target.exists():
-            conflicts.append({
-                "file": rel_path,
-                "reason": "Target file does not exist",
-            })
-            continue
-        
-        original = target.read_text(encoding="utf-8").splitlines(keepends=True)
-
-        # 1) 정석 hunk 적용
-        patched = _apply_patch(original, hunks)
-
-        # 2) 실패 시 fallback
-        if patched is None:
-            patched = _fallback_simple_replace(original, hunks)
-
-        if patched is None:
-            conflicts.append({
-                "file": rel_path,
-                "reason": "Patch conflict: hunk context mismatch",
-            })
+    i = 0
+    while i < len(lines):
+        # skip diff --git line
+        if lines[i].startswith("diff --git"):
+            i += 1
             continue
 
-        if not dry_run:
-            target.write_text("".join(patched), encoding="utf-8")
+        if lines[i].startswith("--- "):
+            if i + 1 >= len(lines) or not lines[i + 1].startswith("+++ "):
+                i += 1
+                continue
 
-        applied.append({
-            "file": rel_path,
-            "dry_run": dry_run,
-            "changed": original != patched,
-            "hunks": len(hunks),
-        })
+            new_path = lines[i + 1][4:].strip()
+            rel_path = _normalize_diff_path(new_path)
+            i += 2
 
-    return {"applied": applied, "conflicts": conflicts}
+            hunks = []
+            while i < len(lines) and lines[i].startswith("@@"):
+                header = lines[i]
+                i += 1
+                hunk_lines = []
+                while i < len(lines) and not lines[i].startswith(("@@", "--- ", "diff --git")):
+                    hunk_lines.append(lines[i])
+                    i += 1
+                hunks.append({
+                    "header": header,
+                    "lines": hunk_lines,
+                })
 
+            patches.append({
+                "path": rel_path,
+                "hunks": hunks,
+            })
+        else:
+            i += 1
 
-def apply_unified_diff(input: dict):
-    """
-    LEGACY ADAPTER (호환용)
-    - context/run_id/step_id는 읽지 않는다 (완전 제거)
-    - file_path가 없으면 diff header에서 추론한다
-    """
-    diff_text = input["diff"]
-
-    fp = input.get("file_path")
-    if fp is None:
-        fp = _infer_file_path(diff_text)
-
-    out = apply_unified_diff_pure(
-        project_id=input["project_id"],
-        diff_text=diff_text,
-        dry_run=input.get("dry_run", False),
-        file_path=fp,  # 검증 겸용
-    )
-    return out, None
-
-
-# ---------- internals ----------
-def _infer_file_path(diff_text: str) -> str:
-    """
-    unified diff 텍스트에서 대상 file_path를 추론한다.
-
-    현재는 single-file diff만 허용한다.
-    multi-file diff인 경우 ValueError 발생.
-    """
-
-    old_paths = []
-    new_paths = []
-
-    for line in diff_text.splitlines():
-        if line.startswith("--- "):
-            path = line[4:].strip()
-            if path != "/dev/null":
-                old_paths.append(_normalize_diff_path(path))
-
-        elif line.startswith("+++ "):
-            path = line[4:].strip()
-            if path != "/dev/null":
-                new_paths.append(_normalize_diff_path(path))
-
-    paths = set(old_paths + new_paths)
-
-    if not paths:
-        raise ValueError("Cannot infer file path: no diff file header found")
-
-    if len(paths) > 1:
-        raise ValueError(
-            f"Multi-file diff is not supported yet: {paths}"
-        )
-
-    return paths.pop()
+    return patches
 
 
 def _normalize_diff_path(path: str) -> str:
@@ -156,45 +134,31 @@ def _normalize_diff_path(path: str) -> str:
     return path
 
 
+def _apply_single_file_patch(*, root: Path, rel_path: str, hunks: List[dict], dry_run: bool) -> dict:
+    target = _safe_file(root, rel_path)
+    if target.exists():
+        original = target.read_text(encoding="utf-8", errors="ignore").splitlines(keepends=True)
+    else:
+        original = []
 
-def _parse_unified_diff(diff_text: str) -> List[dict]:
-    """
-    Very small unified diff parser
-    (file-level split + hunks)
-    """
-    lines = diff_text.splitlines()
-    patches = []
+    patched = _apply_patch(original, hunks)
+    if patched is None:
+        # fallback 시도
+        patched = _fallback_simple_replace(original, hunks)
+        if patched is None:
+            raise ValueError("Patch conflict (context mismatch)")
+        
+    if not dry_run:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("".join(patched), encoding="utf-8")
 
-    i = 0
-    while i < len(lines):
-        if lines[i].startswith("--- "):
-            old = lines[i][4:].strip()
-            new = lines[i+1][4:].strip()
-            #a/foo.js -> foo.js
-            path = new.replace("b/", "", 1)
-            i += 2
+    return {
+        "file": rel_path,
+        "changed": original != patched,
+        "dry_run": dry_run,
+        "created": not target.exists(),
+    }
 
-            hunks =[]
-            while i < len(lines) and lines[i].startswith("@@"):
-                header = lines[i]
-                i += 1
-                hunk_lines = []
-                while i < len(lines) and not lines[i].startswith(("@@", "--- ")):
-                    hunk_lines.append(lines[i])
-                    i += 1
-                hunks.append({
-                    "header": header,
-                    "lines": hunk_lines
-                })
-            
-            patches.append({
-                "path": path,
-                "hunks": hunks
-            })
-        else:
-            i += 1
-    
-    return patches
 
 def _apply_patch(original: List[str], hunks: List[dict]) -> List[str] | None:
     """
@@ -220,33 +184,23 @@ def _apply_patch(original: List[str], hunks: List[dict]) -> List[str] | None:
         for line in hunk["lines"]:
             # context line
             if line.startswith(" "):
-                if idx >= len(result):
+                if idx >= len(result) or result[idx].rstrip("\r\n") != line[1:]:
                     return None
-                
-                cur =  result[idx].rstrip("\r\n")
-                expected = line[1:]
-
-                if cur != expected:
-                    return None
-                
                 new_block.append(result[idx])
                 idx += 1
                 consumed += 1
+
             # removed line
             elif line.startswith("-"):
-                if idx >= len(result):
+                if idx >= len(result) or result[idx].rstrip("\r\n") != line[1:]:
                     return None
-                cur = result[idx].rstrip("\r\n")
-                expected = line[1:]
-
-                if cur != expected:
-                    return None
-                
                 idx += 1
                 consumed += 1
+
             # added line    
             elif line.startswith("+"):
                 new_block.append(line[1:] + "\n")
+
             else:
                 # invalid diff line
                 return None
@@ -255,11 +209,10 @@ def _apply_patch(original: List[str], hunks: List[dict]) -> List[str] | None:
         start = old_start + offset
         end = start + consumed
         result[start:end] = new_block
-
         offset += len(new_block) - consumed
     
     return result
-            
+
 
 def _fallback_simple_replace(original: list[str], hunks: list[dict]) -> list[str] | None:
     """
@@ -291,3 +244,4 @@ def _fallback_simple_replace(original: list[str], hunks: list[dict]) -> list[str
         content = content.replace(before, after, 1)
 
     return content.splitlines(keepends=True)
+

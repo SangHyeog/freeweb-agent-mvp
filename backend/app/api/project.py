@@ -6,12 +6,19 @@ import json
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
-
 @router.get("")
 def list_projects():
     if not PROJECTS_DIR.exists():
         PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+    """
+    items = []
+    for item in sorted([p.name for p in PROJECTS_DIR.iterdir() if p.is_dir()]):
+        if build_node(item):
+            items.append(item)
     
+    return {"items": items}
+    """
+
     return {
         "items": sorted([p.name for p in PROJECTS_DIR.iterdir() if p.is_dir()])
     }

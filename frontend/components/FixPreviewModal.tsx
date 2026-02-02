@@ -45,8 +45,8 @@ interface Props {
   onApplyAndRun: () => void;
   onCancel: () => void;
 
-  onJumpToBlockLine: (blockId: number, lineIndex: number) => void;
-  onHoverBlockLine?: (blockId: number, lineIndex: number | null) => void;
+  onJumpToBlockLine: (filePath: string, blockId: number, lineIndex: number) => void;
+  onHoverBlockLine?: (filePath: string, blockId: number, lineIndex: number | null) => void;
 };
 
 type PreviewRow = {
@@ -72,6 +72,22 @@ function buildPreviewRows(blocks?: ChangeBlock[]): PreviewRow[] {
   });
 
   return rows;
+}
+
+function groupBlockByFile(blocks?: ChangeBlock[]){
+  if (!blocks)
+    return [];
+
+  const map = new Map<string, ChangeBlock[]>();
+
+  for (const block of blocks) {
+    if (!map.has(block.filePath)) {
+      map.set(block.filePath, []);
+    }
+    map.get(block.filePath)!.push(block);
+  }
+
+  return Array.from(map.entries());
 }
 
 
@@ -109,8 +125,10 @@ export default function FixPreviewModal({
   }, [open, onCancel]);
 
   const rows = useMemo(() => buildPreviewRows(blocks), [[blocks]]);
+  const fileGroups = useMemo(() => groupBlockByFile(blocks), [blocks]);
 
-  if (!open) return null;
+  if (!open) 
+    return null;
 
   return (
     <div style={overlayStyle} onClick={onCancel}>
@@ -167,23 +185,45 @@ export default function FixPreviewModal({
             padding: 8, 
             fontSize: 13, borderRadius: 4, marginBottom: 8,
           }}>
-          {rows.length === 0 && (
+          {fileGroups.length === 0 && (
             <div className="empty">No preview available</div>
           )}
 
-          {rows.map((r, i) => (
-            <div
-              key={i}
-              className={`row ${r.type}`}
-              style={{cursor: "pointer"}}
-              onClick={() => onJumpToBlockLine(r.blockId, r.lineIndex)}
-              onMouseEnter={() => onHoverBlockLine?.(r.blockId, r.lineIndex)}
-              onMouseLeave={() => onHoverBlockLine?.(r.blockId, null)}
-            >
-              <span className="prefix">
-                {r.type === "add" ? "+" : r.type === "del" ? "-" : " "}
-              </span>
-              <span className="text">{r.text}</span>
+          {fileGroups.map(([filePath, fileBlocks], fileIndex) => (
+            <div key={filePath} style = {{ marginBottom: 12 }}>
+              {/* 파일 헤더 */ }
+              <div
+                style={{
+                  fontWeight: 700,
+                  fontSize: 13,
+                  padding: " 4px 8px",
+                  background: "#eef2ff",
+                  borderRadius: 4,
+                  marginBottom: 4,
+                }}
+              >
+                {filePath}
+              </div>
+              {/* 해당 파일의 diff lines */}
+              {fileBlocks.map((block, blockId) =>
+                block.lines.map((line, lineIndex) => (
+                  <div 
+                    key={`${fileIndex}-${blockId}-${lineIndex}`}
+                    className={`row ${line.type}`}
+                    onClick={() =>
+                      onJumpToBlockLine(filePath, blockId, lineIndex)
+                    }
+                    onMouseEnter={() => onHoverBlockLine?.(filePath, blockId, lineIndex)}
+                    onMouseLeave={() => onHoverBlockLine?.(filePath, blockId, null)}
+                    style={{ cursor: "pointer", paddingLeft: 12 }}
+                  >
+                    <span className="prefix">
+                      {line.type === "add" ? "+" : line.type === "del" ? "-" : " "}
+                    </span>
+                    <span className="text">{line.content}</span>
+                  </div>
+                ))
+              )}
             </div>
           ))}
         </div>

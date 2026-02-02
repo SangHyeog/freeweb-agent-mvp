@@ -18,6 +18,7 @@ import { useRunPresets } from "../hooks/useRunPresets";
 import { collectHighlightLines } from "../utils/diff";
 import { FixStatus, FixMeta, ChangeBlock } from "../utils/types";
 import type { editor as MonacoEditorType } from "monaco-editor";
+import { ignoreListAnonymousStackFramesIfSandwiched } from "next/dist/next-devtools/server/shared";
 
 
 
@@ -157,20 +158,27 @@ export default function Home() {
     const model = editorRef.current.getModel();
     if (!model) return;
 
-    //  diff 기반 라인 추출
-    let lines = collectHighlightLines(pendingBlocks);
+    const currentPath = files.selectedPath;
+    const lines: number[] = [];
 
-    if (lines.length === 0) {
-      console.warn("[agent-fix] no highlight lines from blocks");
-      setPendingBlocks(null);
-      return;
+    //  diff 기반 라인 추출
+    for (const b of pendingBlocks) {
+      if (b.filePath !== currentPath)
+        continue;
+      for (const line of b.lines) {
+        const n = line.newLine ?? line.oldLine;
+        if (n)
+          lines.push(n);
+      }
     }
 
-    highlightChangedLines(lines);
-    editorRef.current.revealLineInCenter(lines[0]);
+    if (lines.length) {
+      highlightChangedLines(Array.from(new Set(lines)));
+      editorRef.current.revealLineInCenter(lines[0]);
+    }
 
     setPendingBlocks(null);
-  }, [files.code])
+  }, [files.selectedPath, files.code])
 
   //  prject change
   useEffect(() =>{
@@ -298,8 +306,8 @@ export default function Home() {
       //  수정된 파일 다시 로드
       const newContent = await files.reloadFile("main.js");
 
-      const data = await res.json().catch(() => null);
-      setPendingBlocks(data.meta.blocks);
+      //const data = await res.json().catch(() => null);
+      setPendingBlocks(fixMeta?.blocks ?? null);
 
       //  상태 갱신
       setFixDiff(null);
@@ -431,6 +439,59 @@ export default function Home() {
     editorRef.current.focus();
   }
 
+  async function jumpToBlockLine(filePath: string, blockId: number, lineIndex: number) {
+    //  다른 파일이면 먼저 열기
+    if (files.selectedPath !== filePath) {
+      await files.openFile(filePath);
+    }
+
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const model = editor.getModel();
+    if (!model) return;
+
+    // blocks에서 실제 라인 계산
+    const blocks = fixMeta?.blocks;
+    if (!blocks) return;
+
+    const block = blocks.find((b) => b.filePath === filePath);
+    if (!block) return;
+
+    const line = block.lines[lineIndex];
+    if (!line) return;
+
+    const estimated = findLineByContent(model, line.content, block.newStart);
+    const targetLine = estimated ?? block.newStart;
+
+    editor.revealLineInCenter(targetLine);
+    editor.setPosition({
+      lineNumber: targetLine,
+      column: 1,
+    });
+    editor.focus();
+  }
+
+  function findLineByContent(model: MonacoEditorType.ITextModel, content: string, around?: number): number | null {
+    const total = model.getLineCount();
+    let best: number | null = null;
+    let bestDist = Infinity;
+
+    for (let i = 1; i <= total; i++) {
+      const line = model.getLineContent(i).trim();
+      if (line === content.trim()) {
+        if (around == null) return i;
+
+        const dist = Math.abs(i - around);
+        if (dist < bestDist) {
+          best = i;
+          bestDist = dist;
+        }
+      }
+    }
+    return best
+  }
+
   function jumpToError() {
     if (!editorRef.current || !lastErrorLine) return;
 
@@ -470,14 +531,14 @@ export default function Home() {
     editorRef.current.focus();
   }
 
-  function previewHoverLine(line: number | null) {
+  function previewHoverLine(filePath: string, blockId: number, lineIndex: number | null) {
     if (!editorRef.current || !monacoRef.current) return;
 
     const model = editorRef.current.getModel();
     if (!model) return;
 
     // hover 해제
-    if (line == null) {
+    if (lineIndex == null) {
       hoverDecorationsRef.current = model.deltaDecorations(
         hoverDecorationsRef.current,
         []
@@ -485,14 +546,26 @@ export default function Home() {
       return;
     }
 
+    const blocks = fixMeta?.blocks;
+    if (!blocks) return;
+
+    const block = blocks.find((b) => b.filePath === filePath);
+    if (!block) return;
+
+    const line = block.lines[lineIndex];
+    if (!line) return;
+
+    const estimated = findLineByContent(model, line.content, block.newStart);
+    const targetLine = estimated ?? block.newStart;
+
     hoverDecorationsRef.current = model.deltaDecorations(
       hoverDecorationsRef.current,
       [{
         range: new monacoRef.current.Range(
-          line,
+          targetLine,
           1,
-          line,
-          model.getLineMaxColumn(line)
+          targetLine,
+          model.getLineMaxColumn(targetLine)
         ),
         options: {
           isWholeLine: true,
@@ -781,24 +854,12 @@ export default function Home() {
         onApplyAndRun={applyAndRun}
         onCancel={() => {
           setFixPreviewOpen(false);
-          previewHoverLine(null);   //  닫힐 때 hover 제거
+          previewHoverLine("", 0, null);   //  닫힐 때 hover 제거
           //setFixDiff(null);
           //setFixStatus("idle");
         }}
-        onJumpToBlockLine={jumpToLine}
-        onHoverBlockLine={(blockId, lineIndex) => {
-          if (lineIndex == null) {
-            previewHoverLine(null);
-            return;
-          }
-
-          const block = fixMeta?.blocks?.[blockId];
-          const line =
-            block?.lines?.[lineIndex]?.newLine ??
-            block?.lines?.[lineIndex]?.oldLine;
-
-          if (line) previewHoverLine(line);
-        }}
+        onJumpToBlockLine={jumpToBlockLine}
+        onHoverBlockLine={previewHoverLine}
       />
       <QuickOpen
         open={quickOpen}

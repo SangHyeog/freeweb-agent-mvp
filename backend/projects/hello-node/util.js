@@ -1,5 +1,3 @@
-function getValue() {
-    return test1;
-}
-
+function getValue(){ return 1; };
 module.exports = { getValue };
+
