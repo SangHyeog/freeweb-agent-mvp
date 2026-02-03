@@ -6,15 +6,26 @@ from app.agent.core.orchestrator import SimpleAgentOrchestrator
 from app.agent.schemas.fix import AgentFixRequest, AgentFixResponse, AgentFixApplyRequest
 from app.agent.core.fix_orchestrator import AgentFixOrchestrator
 
+from app.agent.schemas.gen import AgentGenPreviewRequest, AgentGenApplyRequest, AgentGenResponse
+from app.agent.core.gen_orchestrator import AgentGenOrchestrator
+
 from app.agent.validator import validate_tool_call
 from app.agent.runner import run_tool
-
-from app.agent.tools.diff.preview import preview_fix
-from app.agent.tools.diff.apply import apply_fix
 
 router = APIRouter()
 orch = SimpleAgentOrchestrator()
 fix_orch = AgentFixOrchestrator()
+gen_orch = AgentGenOrchestrator()
+
+
+@router.post("/agent/gen/preview", response_model=AgentGenResponse)
+def preview_gen(req: AgentGenPreviewRequest):
+    return gen_orch.preview_gen(req)
+
+
+@router.post("/agent/gent/apply", response_model=AgentGenResponse)
+def apply_gen(req: AgentGenApplyRequest):
+    return gen_orch.apply_gen(req)
 
 
 @router.post("/agent/fix/preview", response_model=AgentFixResponse)

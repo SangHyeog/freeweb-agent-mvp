@@ -1,9 +1,10 @@
 import { BlockList } from "net";
 import { useEffect, useRef } from "react";
 
-import { FixStatus, FixMeta } from "../utils/types";
+import { FixStatus, OutputFixInfo, ChangeBlock } from "../utils/types";
 import FixManualReviewHint from "./FixManualReviewHint";
                  
+
 
 type Props = {
     output: string;
@@ -15,7 +16,8 @@ type Props = {
     fixStatus: FixStatus;
     onFixWithAgent: () => void;
     onApplyAndRerun: () => void;
-    fixMeta?: FixMeta | null;
+    fixInfo?: OutputFixInfo | null;
+    previewBlocks?: ChangeBlock[] | null;
     onJumpToError?: () => void;
     onOpenEditorHelp?: () => void;
 };
@@ -25,7 +27,7 @@ export default function OutputPanel (props: Props) {
     const {output, 
       autoScroll, setAutoScroll, setOutput, canFix, fixStatus, 
       onFixWithAgent, onApplyAndRerun, 
-      fixMeta, 
+      fixInfo, previewBlocks,
       onJumpToError, onOpenEditorHelp 
     } = props;
     const ref = useRef<HTMLPreElement | null>(null);
@@ -49,7 +51,7 @@ export default function OutputPanel (props: Props) {
                 Copy
               </button>
               {/* 🤖 Fix with Agent */}
-              {fixMeta?.estimated && (
+              {fixInfo?.estimated && (
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span
                     style={{
@@ -101,9 +103,9 @@ export default function OutputPanel (props: Props) {
               )}
               {fixStatus === "manual_review" && (
                 <FixManualReviewHint 
-                  blocks={fixMeta?.blocks}
-                  failureType={fixMeta?.failure_type}
-                  explanation={fixMeta?.explanation}
+                  blocks={previewBlocks ?? []}
+                  failureType={fixInfo?.failure_type}
+                  explanation={fixInfo?.explanation}
                 />
               )}
               <label style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>

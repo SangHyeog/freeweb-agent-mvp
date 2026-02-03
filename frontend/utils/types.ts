@@ -1,10 +1,9 @@
 export type FixStatus = "idle" | "preview_ready" | "manual_review" | "applying" | "applied" | "failed";
 
-export type FixMeta = {
-  estimated?: boolean;
+export type OutputFixInfo = {
   failure_type?: string;
+  estimated?: boolean;
   explanation?: string;
-  blocks?: ChangeBlock[];
 };
 
 export type ChangeLineType = "context" | "add" | "del";
@@ -19,6 +18,7 @@ export type ChangeLine = {
 
 export type ChangeBlock = {
   filePath: string;
+  fileExists?: boolean;
   oldStart: number;
   oldLength: number;
   newStart: number;

@@ -40,6 +40,23 @@ def load_llm_config() -> LLMConfig:
     )
 
 
+def generate_gen_diff(*, prompt: str, project_id: str, entry: str | None, lang: str | None) -> Tuple[Optional[str], bool]:
+    # 0) 테스트용: prompt에 따라 fake diff 생성
+    # "getValue util.js" 같은 키워드로 분기
+    if "getValue" in prompt and (lang == "node" or lang is None):
+        diff = (
+            "diff --git a/util.js b/util.js\n"
+            "--- a/util.js\n"
+            "+++ b/util.js\n"
+            "@@ -0,0 +1,2 @@\n"
+            "+function getValue(){ return 1; }\n"
+            "+module.exports = { getValue };\n"
+        )
+        return diff, True   # estimated = True
+    
+    return None, True
+
+
 def generate_fix_diff(*, error_log: str, files: list[dict]) -> Tuple[Optional[str], bool]:
     """
     Returns:

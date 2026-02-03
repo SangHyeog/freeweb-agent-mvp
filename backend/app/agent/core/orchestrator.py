@@ -10,7 +10,7 @@ from app.agent.tools.exec import run as exec_run
 from app.agent.tools.patch import apply_unified_diff
 from app.agent.core.rollback import rollback
 
-from app.agent.llm.client import generate_fix_diff
+from app.agent.llm.generate_diff import generate_fix_diff
 from app.agent.llm.errors import LLMInvalidDiffError, LLMError
 
 from .llm_gateway import call_llm

@@ -8,11 +8,10 @@ from app.agent.llm.prompts import build_diff_only_prompt
 
 from app.agent.tools.fs import read_file_tool, write_file_tool
 from app.agent.tools.logs import find_log, find_log_by_run_id, parse_log
-#from app.agent.tools.patch import apply_unified_diff
 from app.utils.diff.parse_unified import parse_unified_diff
 from app.utils.diff.estimate_blocks import estimate_blocks_from_error
 from app.agent.tools.diff.apply import apply_fix as apply_diff_tool
-from app.agent.llm.client import generate_fix_diff
+from app.agent.llm.generate_diff import generate_fix_diff
 from app.agent.llm.errors import LLMInvalidDiffError, LLMError
 from app.services.history_service import get_run
 
@@ -34,9 +33,9 @@ def validate_unified_diff(diff: str) -> None:
         raise ValueError("Invalid diff: broken hunk")
     
 
-def _build_blocks_from_diff_or_estimate(diff: str | None, ctx: FixContext, estimated: bool,) -> list | None:
+def _build_blocks_from_diff_or_estimate(diff: str | None, ctx: FixContext, estimated: bool) -> list | None:
     if diff:
-        return parse_unified_diff(diff_text=diff, default_file_path=ctx.entry)
+        return parse_unified_diff(diff_text=diff, default_file_path=ctx.entry, project_id=ctx.project_id)
 
     if estimated:
         # 여기서 위치 추정 blocks 생성

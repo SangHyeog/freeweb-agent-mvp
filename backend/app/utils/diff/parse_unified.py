@@ -2,19 +2,19 @@ import re
 from typing import List, Optional
 from .models import ChangeBlock, ChangeLine
 
+from app.core.config import PROJECTS_DIR
 
 _HUNK_HEADER_RE = re.compile(
     r"@@\s+-([0-9]+)(?:,([0-9]+))?\s+\+([0-9]+)(?:,([0-9]+))?\s+@@"
 )
 
 # agent / frontend 전용: diff를 UI용 ChangeBlock 구조로 변환
-def parse_unified_diff(diff_text: str, default_file_path: Optional[str] = None, ) -> List[ChangeBlock]:
+def parse_unified_diff(diff_text: str, default_file_path: Optional[str] = None, project_id: str = "") -> List[ChangeBlock]:
     """
     unified diff -> List[ChangeBlock]
     - multi-file diff 지원: ---/+++ header로 filePath를 설정
     - default_file_path는 header가 없을 때 fallback
     """
-
     lines = diff_text.splitlines()
     blocks: List[ChangeBlock] = []
 
@@ -46,7 +46,7 @@ def parse_unified_diff(diff_text: str, default_file_path: Optional[str] = None, 
                 hunk_lines.append(lines[i])
                 i += 1
 
-            blocks.extend(_hunk_to_change_blocks(cur_file, header, hunk_lines))
+            blocks.extend(_hunk_to_change_blocks(cur_file, header, hunk_lines, project_id))
             continue
 
         i += 1
@@ -61,11 +61,13 @@ def _normalize_diff_path(path: str) -> str:
     return path
 
 
-def _hunk_to_change_blocks(file_path: str, header: str, hunk_lines: list[str]) -> List[ChangeBlock]:
+def _hunk_to_change_blocks(file_path: str, header: str, hunk_lines: list[str], project_id: str) -> List[ChangeBlock]:
     """
     Single hunk -> single ChangeBlock
     (Day26 기준: hunk 단위 block)
     """
+    abs_path = PROJECTS_DIR / project_id / file_path
+
     m = _HUNK_HEADER_RE.search(header)
     if not m:
         return []
@@ -118,6 +120,7 @@ def _hunk_to_change_blocks(file_path: str, header: str, hunk_lines: list[str]) -
 
     block: ChangeBlock = {
         "filePath": file_path,
+        "fileExists": abs_path.exists(),
         "oldStart": old_start,
         "oldLength": old_len,
         "newStart": new_start,
