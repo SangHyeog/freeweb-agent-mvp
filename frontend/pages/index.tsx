@@ -66,6 +66,10 @@ export default function Home() {
   const [previewReason, setPreviewReason] = useState<string | undefined>();
   const [previewExplanation, setPreviewExplanation] = useState<string | undefined>();
   const [previewStatus, setPreviewStatus] = useState<FixStatus>("idle");
+
+  //  agent gen
+  const [genOpen, setGenOpen] = useState(false);
+  const [genPrompt, setGenPrompt] = useState("");
   
 
   const [lastErrorLine, setLastErrorLine] = useState<number | null>(null);
@@ -586,6 +590,38 @@ export default function Home() {
     );
   }
 
+  function onOpenGenPanel() {
+    setGenOpen(true);
+  }
+
+  function onCancelGen() {
+    setGenPrompt("");
+    setGenOpen(false);
+  }
+
+  async function onGeneratePreview() {
+    if (!genPrompt.trim())
+      return;
+
+    //  FixPreviewModal로 진입
+    setPreviewStatus("preview_ready");
+    setGenOpen(false);
+
+    const {ok, data} = await previewGen({
+      project_id: projectId,
+      prompt: genPrompt,
+    });
+
+    if (!ok || !data.ok || !data.blocks) {
+      setPreviewStatus("manual_review");
+      return;
+    }
+
+    setPreviewBlocks(data.blocks);
+    setPreviewDiff(data.diff);
+    setPreviewOpen(true);
+  }
+
   async function handleGenPreview(prompt: string) {
     setPreviewStatus("preview_ready");
 
@@ -762,9 +798,6 @@ export default function Home() {
         />
 
         <div style={{ padding: 12, borderBottom: "1px solid #ddd", display: "flex", gap: 8 }}>
-          <div style={{ padding: 12, borderBottom: "1px solid #ddd" }}>
-            <GenPanel onPreview={handleGenPreview} />
-          </div>
           <div style={{ fontWeight: 800 }}>{files.selectedPath}</div>
           <div style={{ /*marginLeft: "auto",*/ display: "flex", alignItems: "center", gap: 8 }}>
             <button onClick={onSave} disabled={run.isRunning}>
@@ -909,8 +942,13 @@ export default function Home() {
             onApplyAndRerun={onApplyAndRerun}
             fixInfo={outputFixInfo}
             previewBlocks={previewBlocks}
-            onJumpToError={jumpToError}
-            onOpenEditorHelp={openEditorHelp}
+
+            genOpen={genOpen}
+            genPrompt={genPrompt}
+            onOpenGen={onOpenGenPanel}
+            onChangeGenPrompt={setGenPrompt}
+            onCancelGen={onCancelGen}
+            onPreviewGen={onGeneratePreview}
           />
         </div>
       </div>
@@ -928,6 +966,7 @@ export default function Home() {
         onCancel={() => {
           setPreviewOpen(false);
           previewHoverLine("", 0, null);   //  닫힐 때 hover 제거
+          setPreviewStatus("idle");
         }}
         onJumpToBlockLine={jumpToBlockLine}
         onHoverBlockLine={previewHoverLine}

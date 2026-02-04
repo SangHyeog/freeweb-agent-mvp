@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.agent.core.orchestrator import SimpleAgentOrchestrator
@@ -6,7 +6,7 @@ from app.agent.core.orchestrator import SimpleAgentOrchestrator
 from app.agent.schemas.fix import AgentFixRequest, AgentFixResponse, AgentFixApplyRequest
 from app.agent.core.fix_orchestrator import AgentFixOrchestrator
 
-from app.agent.schemas.gen import AgentGenPreviewRequest, AgentGenApplyRequest, AgentGenResponse
+from app.agent.schemas.gen import AgentGenRequest, AgentGenApplyRequest, AgentGenResponse
 from app.agent.core.gen_orchestrator import AgentGenOrchestrator
 
 from app.agent.validator import validate_tool_call
@@ -19,13 +19,23 @@ gen_orch = AgentGenOrchestrator()
 
 
 @router.post("/agent/gen/preview", response_model=AgentGenResponse)
-def preview_gen(req: AgentGenPreviewRequest):
-    return gen_orch.preview_gen(req)
+def preview_gen(req: AgentGenRequest):
+    try:
+        return gen_orch.preview_gen(req)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/agent/gent/apply", response_model=AgentGenResponse)
 def apply_gen(req: AgentGenApplyRequest):
-    return gen_orch.apply_gen(req)
+    """
+    apply는 preview 이후 diff를 다시 보내야 한다
+    (FixApplyRequest 패턴과 동일)
+    """
+    try:
+        return gen_orch.apply_gen(req, req.diff)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/agent/fix/preview", response_model=AgentFixResponse)

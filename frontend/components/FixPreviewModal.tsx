@@ -90,6 +90,12 @@ function groupBlockByFile(blocks?: ChangeBlock[]){
   return Array.from(map.entries());
 }
 
+function hasApplicableChanges(blocks?: ChangeBlock[]) {
+  if (!blocks || blocks.length === 0)
+    return false;
+
+  return blocks.some((b) => b.filePath !== "unknown" && b.lines?.some(line => line.type === "add" || line.type === "del"));
+}
 
 export default function FixPreviewModal({
   open,
@@ -109,8 +115,11 @@ export default function FixPreviewModal({
   const [showAll, setShowAll] = useState(false);
   const [showReason, setShowReason] = useState(false);
 
+  const canApply = hasApplicableChanges(blocks);
+
   useEffect(() => {
-    if (!open) return;
+    if (!open)
+      return;
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -239,7 +248,7 @@ export default function FixPreviewModal({
           <button onClick={onCancel} disabled={applying}>
             Cancel
           </button>
-          {mode === "preview" && (
+          {canApply && mode === "preview" && (
             <>
               <button onClick={onApply} disabled={applying} style={{
                 background: "#2563eb",

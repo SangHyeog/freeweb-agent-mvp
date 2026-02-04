@@ -6,6 +6,8 @@ export type OutputFixInfo = {
   explanation?: string;
 };
 
+export type OutputMode = "idle" | "gen" | "fix_preview" | "applying"
+
 export type ChangeLineType = "context" | "add" | "del";
 
 //  ChangeBlock 중심 구조
