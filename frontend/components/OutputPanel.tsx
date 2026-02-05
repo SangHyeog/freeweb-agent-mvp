@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-import { FixStatus, OutputFixInfo, ChangeBlock } from "../utils/types";
+import { FixStatus, RunStatus, OutputFixInfo, ChangeBlock } from "../utils/types";
 import FixManualReviewHint from "./FixManualReviewHint";
 import GenPanel from "./GenPanel";
                  
@@ -14,6 +14,7 @@ type Props = {
 
     canFix: boolean;    
     fixStatus: FixStatus;
+    runStatus: RunStatus;
     onFixWithAgent: () => void;
     onApplyAndRerun: () => void;
     fixInfo?: OutputFixInfo | null;
@@ -30,7 +31,7 @@ type Props = {
 
 export default function OutputPanel (props: Props) {
   const {output, 
-    autoScroll, setAutoScroll, setOutput, canFix, fixStatus, 
+    autoScroll, setAutoScroll, setOutput, canFix, fixStatus, runStatus,
     onFixWithAgent, onApplyAndRerun, 
     fixInfo, previewBlocks,
     genOpen, genPrompt, onOpenGen, onChangeGenPrompt, onCancelGen, onPreviewGen
@@ -71,6 +72,13 @@ export default function OutputPanel (props: Props) {
             <button onClick={onOpenGen} style={{ background: "#7c3aed", color: "#fff", border: "none", padding: "4px 10px", borderRadius: 4, }} >
               ✨ Generate
             </button>
+          )}
+
+          {/* RunStatus */}
+          {runStatus === "error" && (
+            <span style={{ color: "#dc2626", fontSize: 12, marginLeft: 8, }}>
+              ⚠️ 실행이 실패했습니다. Agent로 수정해볼까요?
+            </span>
           )}
 
           {fixStatus === "applying" && <span>🤖 Applying fix…</span>}

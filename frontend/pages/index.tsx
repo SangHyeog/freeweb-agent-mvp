@@ -16,10 +16,9 @@ import { useHistory } from "../hooks/useHistory";
 import { useRunSpec } from "../hooks/useRunSpec";
 import { useRunPresets } from "../hooks/useRunPresets";
 
-import { FixStatus, OutputFixInfo, ChangeBlock } from "../utils/types";
+import { FixStatus, RunStatus, OutputFixInfo, ChangeBlock } from "../utils/types";
 import type { editor as MonacoEditorType } from "monaco-editor";
 
-import GenPanel from "../components/GenPanel";
 import { useAgentGen } from "../hooks/useAgentGen";
 
 
@@ -70,6 +69,9 @@ export default function Home() {
   //  agent gen
   const [genOpen, setGenOpen] = useState(false);
   const [genPrompt, setGenPrompt] = useState("");
+
+  //  run Status
+  const [runStatus, setRunStatus] = useState<RunStatus>("idle");
   
 
   const [lastErrorLine, setLastErrorLine] = useState<number | null>(null);
@@ -220,13 +222,13 @@ export default function Home() {
     return null;
   }
 
-  const onRun = () => {
+  const onRun = async (): Promise<boolean> => {
     const entry = resolveEntry();
     const lang = runSpec.spec?.lang ?? "node";
 
     if (!entry) {
       alert("Cannot determine entry file");
-      return;
+      return false;
     }
 
     setLastRunContext({entry, lang});
@@ -241,18 +243,36 @@ export default function Home() {
     setOutput("");
 
     if (runSpec.spec?.entry && runSpec.spec?.lang) {
-      return;
+      return true;
     }
 
-    run.run(
-      (chunk) => {
-        const m = String(chunk).match(/\[RUN_ID\]\s*([a-zA-Z0-9_-]+)/);
-        if (m?.[1])
-          setCurrentRunId(m[1]);
-        setOutput((prev) => prev + chunk);
-      },
-      () => hist.refreshHistory(),
-    );
+    return new Promise<boolean>((resolve) => {
+      let hadError = false;
+      
+      run.run(
+        (chunk) => {
+          const text = String(chunk);
+
+          //  RUN_ID 추출
+          const m = text.match(/\[RUN_ID\]\s*([a-zA-Z0-9_-]+)/);
+          if (m?.[1])
+            setCurrentRunId(m[1]);
+
+          //  에러 감지(보수적으로)
+          if (text.includes("[ERROR]") || text.includes("Error") || text.includes("Exception")) {
+            hadError = true;
+          }
+
+          setOutput((prev) => prev + text);
+        },
+
+        //  run 종료 콜백
+        () => {
+          hist.refreshHistory();
+          resolve(!hadError);
+        }
+      );
+    });
   };
 
   const onStop = async () => {
@@ -361,6 +381,7 @@ export default function Home() {
     setPreviewStatus("applying");
 
     try {
+      //  Fix 적용
       const res = await fetch(`${API_BASE}/agent/fix/apply`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -376,15 +397,27 @@ export default function Home() {
         return;
       }
 
-      // ✅ Fix 적용 완료
+      //  Fix 적용 완료 -> preview 종료
       setPreviewOpen(false);
       setPreviewDiff(null);
       setPreviewStatus("idle");
 
-      // ✅ 바로 Run 재실행
-      onRun();   // ← 기존 Run 버튼과 동일한 함수
-    } catch {
+      //  Run 실행(결과를 기다림)
+      setRunStatus("running");
+
+      //  onRun은 반드시 boolean or result를 return 해야 함.
+      const runOK = await onRun();
+
+      if (runOK){
+        setRunStatus("ok");
+      } else {
+        //  run 실패 -> Fix 다시 유도
+        setRunStatus("error");
+        //  fixStatus는 idle이므로 Fix with Agent 버튼 다시 보임
+      }
+    } catch (e) {
       setPreviewStatus("failed");
+      setRunStatus("error");
     }
   }
 
@@ -938,6 +971,7 @@ export default function Home() {
             
             canFix={!run.isRunning && !!currentRunId && hasError}
             fixStatus={previewStatus}
+            runStatus={runStatus}
             onFixWithAgent={previewFix}
             onApplyAndRerun={onApplyAndRerun}
             fixInfo={outputFixInfo}

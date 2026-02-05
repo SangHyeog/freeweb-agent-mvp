@@ -1,4 +1,5 @@
 export type FixStatus = "idle" | "preview_ready" | "manual_review" | "applying" | "applied" | "failed";
+export type RunStatus = "idle" | "running" | "ok" | "error";
 
 export type OutputFixInfo = {
   failure_type?: string;
