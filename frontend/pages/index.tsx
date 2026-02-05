@@ -37,6 +37,9 @@ export default function Home() {
 
   const {previewGen, applyGen} = useAgentGen(API_BASE);
 
+  //  tab
+  const agentEnabled = canUseAgent();
+
   //  run_id
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
   const [lastRunContext, setLastRunContext] = useState<{ entry: string; lang: string; } | null>(null);
@@ -72,6 +75,7 @@ export default function Home() {
 
   //  run Status
   const [runStatus, setRunStatus] = useState<RunStatus>("idle");
+  const [autoFixTriggered, setAutoFixTriggerd] = useState(false);
   
 
   const [lastErrorLine, setLastErrorLine] = useState<number | null>(null);
@@ -82,7 +86,6 @@ export default function Home() {
   const monacoRef = useRef<any>(null);
   const decorationsRef = useRef<string[]>([]);
   const hoverDecorationsRef = useRef<string[]>([]);
-  
 
   const highlightOverlayStyle: React.CSSProperties = {
     position: "absolute",
@@ -242,10 +245,6 @@ export default function Home() {
     setCurrentRunId(null);
     setOutput("");
 
-    if (runSpec.spec?.entry && runSpec.spec?.lang) {
-      return true;
-    }
-
     return new Promise<boolean>((resolve) => {
       let hadError = false;
       
@@ -284,6 +283,14 @@ export default function Home() {
     await files.refreshFiles();     //  UI 상태 갱신
     runSpec.refresh();              //  실행 규칙 재 감지
   };
+
+  function canUseAgent(): boolean {
+    //  탭이 없으면 entry 추론 금지
+    if (!files.tabs || files.tabs.length === 0) 
+      return false;
+
+    return true;
+  }
 
   async function previewFix() {
     if (!currentRunId || !lastRunContext) {
@@ -414,6 +421,11 @@ export default function Home() {
         //  run 실패 -> Fix 다시 유도
         setRunStatus("error");
         //  fixStatus는 idle이므로 Fix with Agent 버튼 다시 보임
+
+        //  Auto Fix
+        if (!autoFixTriggered) {
+          triggerAutoFixPreview();
+        }
       }
     } catch (e) {
       setPreviewStatus("failed");
@@ -714,6 +726,42 @@ export default function Home() {
     setPreviewOpen(false);    
   }
   
+  async function triggerAutoFixPreview() {
+    if (!currentRunId) return;
+    if (autoFixTriggered) return;
+
+    setAutoFixTriggerd(true);
+
+    setPreviewStatus("preview_ready");
+
+    try {
+      const res = await fetch(`${API_BASE}/agent/fix/preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: projectId,
+          run_id: currentRunId,
+          entry: lastRunContext?.entry,
+          lang: lastRunContext?.lang,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.ok || !data.blocks) {
+        setPreviewStatus("manual_review");
+        return;
+      }
+
+      setPreviewBlocks(data.blocks);
+      setPreviewDiff(data.patches?.[0]?.diff_preview ?? null);
+      setPreviewOpen(true);
+    }
+    catch {
+      setPreviewStatus("manual_review");
+    }
+  }
+
   return (
     <div style={{ height: "100%", display: "flex", fontFamily: "sans-serif" }}>
       {/* Left */}
@@ -969,6 +1017,7 @@ export default function Home() {
             setAutoScroll={setAutoScroll} 
             setOutput={setOutput} 
             
+            agentEnabled={agentEnabled}
             canFix={!run.isRunning && !!currentRunId && hasError}
             fixStatus={previewStatus}
             runStatus={runStatus}

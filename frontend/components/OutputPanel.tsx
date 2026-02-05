@@ -12,7 +12,8 @@ type Props = {
     setAutoScroll: (v: boolean) => void;
     setOutput: (v: string) => void;
 
-    canFix: boolean;    
+    agentEnabled: boolean;
+    canFix: boolean;
     fixStatus: FixStatus;
     runStatus: RunStatus;
     onFixWithAgent: () => void;
@@ -31,7 +32,8 @@ type Props = {
 
 export default function OutputPanel (props: Props) {
   const {output, 
-    autoScroll, setAutoScroll, setOutput, canFix, fixStatus, runStatus,
+    autoScroll, setAutoScroll, setOutput, 
+    agentEnabled, canFix, fixStatus, runStatus,
     onFixWithAgent, onApplyAndRerun, 
     fixInfo, previewBlocks,
     genOpen, genPrompt, onOpenGen, onChangeGenPrompt, onCancelGen, onPreviewGen
@@ -61,14 +63,14 @@ export default function OutputPanel (props: Props) {
           </button>
 
           {/* Fix with Agent */}
-          {canFix && onFixWithAgent && fixStatus === "idle" && (
+          {canFix && onFixWithAgent && fixStatus === "idle" && agentEnabled &&(
             <button onClick={onFixWithAgent} style={{ background: "#2563eb", color: "#fff", border: "none", padding: "4px 10px", borderRadius: 4, }} >
               🤖 Fix with Agent
             </button>
           )}
 
           {/* ✨ Generate */}
-          {canFix && fixStatus === "idle" && (
+          {canFix && fixStatus === "idle" && agentEnabled &&(
             <button onClick={onOpenGen} style={{ background: "#7c3aed", color: "#fff", border: "none", padding: "4px 10px", borderRadius: 4, }} >
               ✨ Generate
             </button>
