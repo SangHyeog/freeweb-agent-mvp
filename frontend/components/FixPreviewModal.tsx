@@ -47,6 +47,10 @@ interface Props {
 
   onJumpToBlockLine: (filePath: string, blockId: number, lineIndex: number) => void;
   onHoverBlockLine?: (filePath: string, blockId: number, lineIndex: number | null) => void;
+
+  suspectFiles?: string[];
+  selectedFile?: string;
+  onSelectTargetFile?: (path: string) => void;
 };
 
 type PreviewRow = {
@@ -110,6 +114,9 @@ export default function FixPreviewModal({
   onCancel,
   onJumpToBlockLine,
   onHoverBlockLine,
+  suspectFiles,
+  selectedFile,
+  onSelectTargetFile,
  }: Props) {
 
   const [showAll, setShowAll] = useState(false);
@@ -146,6 +153,21 @@ export default function FixPreviewModal({
         <h3>
           {mode === "preview" ? "🤖 Agent Fix Preview" : "🔍 Manual Review"}
         </h3>
+
+        {suspectFiles && suspectFiles.length >= 1 && (
+          <div style={{ padding: "8px 12px", borderBottom: "1px solid #eee", background: "#fafafa,"}}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6,}}>
+              이 에러와 관련된 파일 후보
+            </div>
+
+            {suspectFiles.map((file) => (
+              <label key={file} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer", }} >
+                <input type="radio" checked={file === selectedFile} onChange={() => onSelectTargetFile?.(file)} />
+                <code>{file}</code>
+              </label>
+            ))}
+          </div>
+        )}
 
         {targetPath && (
           <div className="path" style={{ fontSize: 12, marginBottom: 6 }}>Target: {targetPath}</div>

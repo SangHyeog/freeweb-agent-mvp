@@ -60,6 +60,10 @@ export default function Home() {
   const dragStartYRef = useRef<number>(0);
   const dragStartHeightRef = useRef<number>(0);
 
+  //  Suspect State
+  const [suspectFiles, setSuspectFiles] = useState<string[] | null>(null);
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+
   //  agent preview (fix + gen 공통)
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewDiff, setPreviewDiff] = useState<string | null>(null);
@@ -307,6 +311,7 @@ export default function Home() {
           run_id: currentRunId,
           entry: lastRunContext.entry,
           lang: lastRunContext.lang,
+          opened_files: files.tabs.map(t => t.path),
         }),
       });
 
@@ -318,10 +323,25 @@ export default function Home() {
       const data = await res.json();
       console.log("PREVIEW RESPONSE:", data);
 
+      const blocks = data.meta?.blocks;
+      if (!res.ok || !data.ok || !blocks || blocks.length === 0) {
+        setPreviewStatus("manual_review");
+        return;
+      }
+
+      const diff = data.patches?.[0].diff_preview;
+
       //  diff 미리보기 상태 셋팅
-      setPreviewBlocks(data.meta?.blocks ?? null);
-      setPreviewDiff(data.patches?.[0]?.diff_preview ?? null);
-      setPreviewTarget(runSpec.spec?.entry);
+      //setPreviewBlocks(data.meta?.blocks ?? null);
+      //setPreviewDiff(data.patches?.[0]?.diff_preview ?? null);
+      setPreviewBlocks(blocks);
+      setPreviewDiff(diff);
+
+      setSuspectFiles(data.meta?.suspect_files ?? null);
+      setSelectedFile(data.meta?.selected_file ?? null);
+      
+      //setPreviewTarget(runSpec.spec?.entry);
+      setPreviewTarget(data.meta?.selected_file ?? lastRunContext.entry);
       setPreviewReason(data.reason);
       setPreviewExplanation(data.meta?.explanation);
 
@@ -336,7 +356,8 @@ export default function Home() {
       setPreviewOpen(true);
 
       // 준비 완료 -> idle로 복귀(모달에서 apply/cancel)
-      setPreviewStatus(data.patches?.[0]?.diff_preview ? "preview_ready" : "manual_review");
+      //setPreviewStatus(data.patches?.[0]?.diff_preview ? "preview_ready" : "manual_review");
+      setPreviewStatus(data.diff ? "preview_ready" : "manual_review");
     } catch (e) {
       setPreviewStatus("failed");
     }
@@ -743,6 +764,7 @@ export default function Home() {
           run_id: currentRunId,
           entry: lastRunContext?.entry,
           lang: lastRunContext?.lang,
+          opened_files: files.tabs.map(t => t.path),
         }),
       });
 
@@ -760,6 +782,43 @@ export default function Home() {
     catch {
       setPreviewStatus("manual_review");
     }
+  }
+
+  async function onSelectTargetFile(file: string) {
+    if (!currentRunId || !lastRunContext)
+      return;
+
+    setSelectedFile(file);
+    setPreviewStatus("applying");   // 로딩 표시용
+
+    const res = await fetch(`${API_BASE}/agent/fix/preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        project_id: projectId,
+        run_id: currentRunId,
+        entry: lastRunContext.entry,
+        lang: lastRunContext.lang,
+        opened_files: files.tabs.map(t => t.path),
+        selected_file: file,
+        force_target: true,
+      }),
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.ok || !data.meta?.blocks) {
+      setPreviewStatus("manual_review");
+      return;
+    }
+      
+
+    setPreviewBlocks(data.meta.blocks);
+    setPreviewDiff(data.patches?.[0]?.diff_preview ?? null);
+    setPreviewTarget(file);
+    setPreviewReason(data.reason);
+    setPreviewExplanation(data.meta.explanation);
+
+    setPreviewStatus("preview_ready");
   }
 
   return (
@@ -1053,6 +1112,9 @@ export default function Home() {
         }}
         onJumpToBlockLine={jumpToBlockLine}
         onHoverBlockLine={previewHoverLine}
+        suspectFiles={suspectFiles ?? undefined}
+        selectedFile={selectedFile ?? undefined}
+        onSelectTargetFile={onSelectTargetFile}
       />
       <QuickOpen
         open={quickOpen}

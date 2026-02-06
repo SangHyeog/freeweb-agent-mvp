@@ -4,6 +4,8 @@ from typing import Optional, List
 
 from app.agent.schemas.fix import AgentFixRequest, AgentFixResponse, AgentPatchApplied, AgentFixApplyRequest
 from app.agent.core.classifier import classifier_failure, FailureType
+from app.agent.core.infer_error_files import infer_error_files
+from app.agent.core.select_target_file import select_target_file_by_score
 from app.agent.llm.prompts import build_diff_only_prompt
 
 from app.agent.tools.fs import read_file_tool, write_file_tool
@@ -50,11 +52,29 @@ def _build_blocks_from_diff_or_estimate(diff: str | None, ctx: FixContext, estim
     return []
 
 
+def _normalize_path(p: str) -> str:
+    return p.lstrip("./")
+
+def build_suspect_candidates(*, inferred, opened, entry):
+    candidates = []
+    
+    for f in inferred:
+        candidates.append(_normalize_path(f))
+    
+    for f in opened:
+        candidates.append(_normalize_path(f))
+
+    if entry and _normalize_path(entry) not in candidates:
+        candidates.insert(0, _normalize_path(entry))
+
+    return candidates
+
+
 class AgentFixOrchestrator:
     def  preview_fix(self, req: AgentFixRequest) -> AgentFixResponse:
         FORCE_PREVIEW_DIFF = True   # ⚠️ 테스트 동안만
         estimated = False   # LLM 정상 응답으로 diff 생성, True : 실패,
-
+        
         # 1. history에서 run 로드
         run = get_run(req.project_id, req.run_id)
         if not run:
@@ -79,21 +99,78 @@ class AgentFixOrchestrator:
                 reason="no_error_ouput",
                 suggested_next="manual_review",
             )
+        
+        if not req.entry:
+            return AgentFixResponse(
+                ok=True,
+                project_id=req.project_id,
+                run_id=req.run_id,
+                fixed=False,
+                reason="no_entry_context",
+                suggested_next="manual_review",
+            )
 
         # 2. 엔트리 파일 읽기
         entry_content = read_file_tool({
             "project_id": req.project_id,
-            "path": req.entry,
+            "path": _normalize_path(req.entry),
         })
+
+        # 원인 파일 후보 추론
+        opened_files = req.opened_files or []
+        inferred_files = infer_error_files(stderr=stderr, lang=req.lang)
+        suspect_files = build_suspect_candidates(
+            inferred=inferred_files,
+            opened=opened_files,
+            entry=req.entry,
+        )
+
+        # 사용자 강제 선택 우선
+        if req.force_target and req.selected_file:
+            selected = _normalize_path(req.selected_file)
+            used_suspect = False    # 사용자 선택
+            forced_by_user = True
+        else:
+            forced_by_user = False
+
+            if inferred_files:
+                selected = _normalize_path(inferred_files[0])
+                used_suspect = True     # 에러 로그 기반
+            else:
+                selected = select_target_file_by_score(
+                    project_id=req.project_id,
+                    candidates=suspect_files,
+                    opened_files=opened_files,
+                    entry=req.entry,
+                )
+                used_suspect = False    # 점수 기반 fallback
+
+        target_entry = _normalize_path(req.entry)
+        target_content = entry_content
+        missinig_suspect = False
+
+        if selected:
+            try:
+                content = read_file_tool({
+                    "project_id": req.project_id,
+                    "path": selected,
+                })
+                target_entry = _normalize_path(selected)
+                target_content = content
+            except Exception:
+                # 실제 파일이 없으면 entry 유지
+                target_entry = _normalize_path(selected)
+                target_content = ""
+                missinig_suspect = True
 
         ctx = FixContext(
             project_id=req.project_id,
             run_id=req.run_id,
-            entry=req.entry,
+            entry=target_entry,
             lang=req.lang,
             stderr=stderr,
             stdout=stdout,
-            entry_content=entry_content,
+            entry_content=target_content,
         )
 
         # 3. 실패 분류
@@ -113,7 +190,12 @@ class AgentFixOrchestrator:
                     "explanation": (
                         "The error occurs because `test1` is not defined. "
                         "The fix replaces it with a string literal."
-                    )
+                    ),
+                    "suspect_files": suspect_files,
+                    "selected_file": selected,
+                    "used_suspect_file": used_suspect,
+                    "missing_suspect_file": missinig_suspect,
+                    "forced_by_user": forced_by_user,
                 },
             )
 
@@ -132,24 +214,17 @@ class AgentFixOrchestrator:
 
             # 테스트 강제 diff
             if FORCE_PREVIEW_DIFF:
+                fname = target_entry    # 이미 normalize 된 값
+                
                 diff = (
-                    f"diff --git a/main.js b/main.js\n"
-                    f"--- a/main.js\n"
-                    f"+++ b/main.js\n"
-                    f"@@ -2,2 +2,3 @@\n"
-                    f" const {{ getValue }} = require("'./util'");\n"
-                    f"\n"
-                    f"+const x = getValue();\n"
-                    f" console.log(x);\n"
-                    f"\n"
-                    f"diff --git a/util.js b/util.js\n"
-                    f"--- a/util.js\n"
-                    f"+++ b/util.js\n"
-                    f"@@ -1,1 +1,3 @@\n"
+                    f"diff --git a/{fname} b/{fname}\n"
+                    f"--- /dev/null\n"
+                    f"+++ b/{fname}\n"
+                    f"@@ -0,0 +1,3 @@\n"
                     f"+function getValue(){{ return 1; }};\n"
                     f"+module.exports = {{ getValue }};\n"
                 )
-                estimated = False
+                estimated = True
 
             # blocks는 여기서 단 한 번 생성
             blocks = _build_blocks_from_diff_or_estimate(diff, ctx, estimated)      
@@ -165,7 +240,12 @@ class AgentFixOrchestrator:
                         "failure_type": ftype.name,
                         "blocks": blocks,
                         "estimated": True,
-                        "explanation": "Unable to generate a reliable diff automatically."
+                        "explanation": "Unable to generate a reliable diff automatically.",
+                        "suspect_files": suspect_files,
+                        "selected_file": selected,
+                        "used_suspect_file": used_suspect,
+                        "missing_suspect_file": missinig_suspect,
+                        "forced_by_user": forced_by_user,
                     },
                     suggested_next="manual_review",
                 )
@@ -191,7 +271,12 @@ class AgentFixOrchestrator:
                     "explanation": (
                         "The error occurs because `test1` is not defined. "
                         "The fix replaces it with a string literal."
-                    )
+                    ),
+                    "suspect_files": suspect_files,
+                    "selected_file": selected,
+                    "used_suspect_file": used_suspect,
+                    "missing_suspect_file": missinig_suspect,
+                    "forced_by_user": forced_by_user,
                 },
                 suggested_next="confirm_apply",
             )

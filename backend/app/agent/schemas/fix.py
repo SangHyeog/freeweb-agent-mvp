@@ -14,6 +14,9 @@ class AgentFixRequest(BaseModel):
     run_id: str = Field(..., description="Failed run id")
     entry: str = Field(..., description="Entry file path (e.g. main.py, main.js)")
     lang: Lang
+    opened_files: list[str] | None = None
+    selected_file: str | None = None
+    force_target: bool = False
 
 
 class AgentPatchApplied(BaseModel):
