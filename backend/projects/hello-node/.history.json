@@ -1,5 +1,29 @@
 [
   {
+    "id": "2f430841fe95",
+    "started_at": 1770615596756,
+    "ended_at": 1770615598336,
+    "status": "error",
+    "exit_code": 1,
+    "signal": null,
+    "reason": "Exited with code 1",
+    "duration_ms": 1291,
+    "output": "[LANG] node\n[ENTRY] None\n[NODE_PRECHECK] OK: package.json + package-lock.json detected.\n\nup to date, audited 1 package in 421ms\n\nfound 0 vulnerabilities\n\n> hello-node@1.0.0 start\n> node main.js\n\nnode:internal/modules/cjs/loader:1210\n  throw err;\n  ^\n\nError: Cannot find module './util'\nRequire stack:\n- /app/main.js\n    at Module._resolveFilename (node:internal/modules/cjs/loader:1207:15)\n    at Module._load (node:internal/modules/cjs/loader:1038:27)\n    at Module.require (node:internal/modules/cjs/loader:1289:19)\n    at require (node:internal/modules/helpers:182:18)\n    at Object.<anonymous> (/app/main.js:1:22)\n    at Module._compile (node:internal/modules/cjs/loader:1521:14)\n    at Module._extensions..js (node:internal/modules/cjs/loader:1623:10)\n    at Module.load (node:internal/modules/cjs/loader:1266:32)\n    at Module._load (node:internal/modules/cjs/loader:1091:12)\n    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:164:12) {\n  code: 'MODULE_NOT_FOUND',\n  requireStack: [ '/app/main.js' ]\n}\n\nNode.js v20.20.0\n",
+    "preview": "les/cjs/loader:1091:12)\n    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:164:12) {\n  code: 'MODULE_NOT_FOUND',\n  requireStack: [ '/app/main.js' ]\n}\n\nNode.js v20.20.0\n"
+  },
+  {
+    "id": "a41a5247ae0a",
+    "started_at": 1770615137883,
+    "ended_at": 1770615139439,
+    "status": "error",
+    "exit_code": 1,
+    "signal": null,
+    "reason": "Exited with code 1",
+    "duration_ms": 1254,
+    "output": "[LANG] node\n[ENTRY] None\n[NODE_PRECHECK] OK: package.json + package-lock.json detected.\n\nup to date, audited 1 package in 408ms\n\nfound 0 vulnerabilities\n\n> hello-node@1.0.0 start\n> node main.js\n\nnode:internal/modules/cjs/loader:1210\n  throw err;\n  ^\n\nError: Cannot find module './util'\nRequire stack:\n- /app/main.js\n    at Module._resolveFilename (node:internal/modules/cjs/loader:1207:15)\n    at Module._load (node:internal/modules/cjs/loader:1038:27)\n    at Module.require (node:internal/modules/cjs/loader:1289:19)\n    at require (node:internal/modules/helpers:182:18)\n    at Object.<anonymous> (/app/main.js:1:22)\n    at Module._compile (node:internal/modules/cjs/loader:1521:14)\n    at Module._extensions..js (node:internal/modules/cjs/loader:1623:10)\n    at Module.load (node:internal/modules/cjs/loader:1266:32)\n    at Module._load (node:internal/modules/cjs/loader:1091:12)\n    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:164:12) {\n  code: 'MODULE_NOT_FOUND',\n  requireStack: [ '/app/main.js' ]\n}\n\nNode.js v20.20.0\n",
+    "preview": "les/cjs/loader:1091:12)\n    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:164:12) {\n  code: 'MODULE_NOT_FOUND',\n  requireStack: [ '/app/main.js' ]\n}\n\nNode.js v20.20.0\n"
+  },
+  {
     "id": "0754d9a1b2b9",
     "started_at": 1770364285390,
     "ended_at": 1770364286888,

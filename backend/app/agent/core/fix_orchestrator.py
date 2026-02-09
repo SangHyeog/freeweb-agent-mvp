@@ -55,7 +55,39 @@ def _build_blocks_from_diff_or_estimate(diff: str | None, ctx: FixContext, estim
 def _normalize_path(p: str) -> str:
     return p.lstrip("./")
 
-def build_suspect_candidates(*, inferred, opened, entry):
+def build_suspect_candidates(*, inferred: list[str], opened: list[str], entry: str | None) -> list[dict]:
+    scores: dict[str, dict] = {}
+
+    def add_score(path: str, score: int, reason: str):
+        if path not in scores:
+            scores[path] = {
+                "path": path,
+                "score": 0,
+                "reasons": [],
+            }
+        scores[path]["score"] += score
+        scores[path]["reasons"].append(reason)
+
+    # 1. 에러 로그에서 직접 추론된 파일
+    for f in inferred:
+        add_score(f, 70, "에러 로그에서 직접 추론됨")
+
+    # 2. 열린 파일
+    for f in opened:
+        add_score(f, 20, "현재 열려 있는 파일")
+
+    # 3. entry 파일
+    if entry:
+        add_score(entry, 15, "실행 entry 파일")
+
+    # 4. 정규화 + 상한
+    for v in scores.values():
+        v["score"] = min(v["score"], 100)
+
+    # score 기준 정렬
+    return sorted(scores.values(), key=lambda x: x["score"], reverse=True)
+
+    """
     candidates = []
     
     for f in inferred:
@@ -68,6 +100,7 @@ def build_suspect_candidates(*, inferred, opened, entry):
         candidates.insert(0, _normalize_path(entry))
 
     return candidates
+    """
 
 
 class AgentFixOrchestrator:
@@ -119,7 +152,7 @@ class AgentFixOrchestrator:
         # 원인 파일 후보 추론
         opened_files = req.opened_files or []
         inferred_files = infer_error_files(stderr=stderr, lang=req.lang)
-        suspect_files = build_suspect_candidates(
+        suspect_candidates = build_suspect_candidates(
             inferred=inferred_files,
             opened=opened_files,
             entry=req.entry,
@@ -139,7 +172,7 @@ class AgentFixOrchestrator:
             else:
                 selected = select_target_file_by_score(
                     project_id=req.project_id,
-                    candidates=suspect_files,
+                    candidates=[c["path"] for c in suspect_candidates],
                     opened_files=opened_files,
                     entry=req.entry,
                 )
@@ -191,7 +224,7 @@ class AgentFixOrchestrator:
                         "The error occurs because `test1` is not defined. "
                         "The fix replaces it with a string literal."
                     ),
-                    "suspect_files": suspect_files,
+                    "suspect_candidates": suspect_candidates,
                     "selected_file": selected,
                     "used_suspect_file": used_suspect,
                     "missing_suspect_file": missinig_suspect,
@@ -241,7 +274,7 @@ class AgentFixOrchestrator:
                         "blocks": blocks,
                         "estimated": True,
                         "explanation": "Unable to generate a reliable diff automatically.",
-                        "suspect_files": suspect_files,
+                        "suspect_candidates": suspect_candidates,
                         "selected_file": selected,
                         "used_suspect_file": used_suspect,
                         "missing_suspect_file": missinig_suspect,
@@ -272,7 +305,7 @@ class AgentFixOrchestrator:
                         "The error occurs because `test1` is not defined. "
                         "The fix replaces it with a string literal."
                     ),
-                    "suspect_files": suspect_files,
+                    "suspect_candidates": suspect_candidates,
                     "selected_file": selected,
                     "used_suspect_file": used_suspect,
                     "missing_suspect_file": missinig_suspect,

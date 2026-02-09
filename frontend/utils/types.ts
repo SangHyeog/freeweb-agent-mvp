@@ -36,3 +36,9 @@ export interface PreviewRow{
   type: ChangeLineType;
   text: string,
 }
+
+export interface SuspectCandidate {
+  path: string;
+  score: number;
+  reasons: string[],
+}

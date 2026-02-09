@@ -16,7 +16,7 @@ import { useHistory } from "../hooks/useHistory";
 import { useRunSpec } from "../hooks/useRunSpec";
 import { useRunPresets } from "../hooks/useRunPresets";
 
-import { FixStatus, RunStatus, OutputFixInfo, ChangeBlock } from "../utils/types";
+import { FixStatus, RunStatus, OutputFixInfo, ChangeBlock, SuspectCandidate } from "../utils/types";
 import type { editor as MonacoEditorType } from "monaco-editor";
 
 import { useAgentGen } from "../hooks/useAgentGen";
@@ -61,7 +61,7 @@ export default function Home() {
   const dragStartHeightRef = useRef<number>(0);
 
   //  Suspect State
-  const [suspectFiles, setSuspectFiles] = useState<string[] | null>(null);
+  const [suspectCandidates, setSuspectCandidates] = useState<SuspectCandidate[] | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
 
   //  agent preview (fix + gen 공통)
@@ -337,7 +337,7 @@ export default function Home() {
       setPreviewBlocks(blocks);
       setPreviewDiff(diff);
 
-      setSuspectFiles(data.meta?.suspect_files ?? null);
+      setSuspectCandidates(data.meta?.suspect_candidates ?? null);
       setSelectedFile(data.meta?.selected_file ?? null);
       
       //setPreviewTarget(runSpec.spec?.entry);
@@ -1112,7 +1112,7 @@ export default function Home() {
         }}
         onJumpToBlockLine={jumpToBlockLine}
         onHoverBlockLine={previewHoverLine}
-        suspectFiles={suspectFiles ?? undefined}
+        suspectCandidates={suspectCandidates ?? undefined}
         selectedFile={selectedFile ?? undefined}
         onSelectTargetFile={onSelectTargetFile}
       />

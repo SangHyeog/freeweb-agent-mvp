@@ -1,6 +1,6 @@
 import React, { useEffect } from "react";
 import { useMemo, useState } from "react";
-import { ChangeBlock } from "../utils/types";
+import { ChangeBlock, SuspectCandidate } from "../utils/types";
 
 const overlayStyle: React.CSSProperties = {
   position: "fixed",
@@ -48,7 +48,7 @@ interface Props {
   onJumpToBlockLine: (filePath: string, blockId: number, lineIndex: number) => void;
   onHoverBlockLine?: (filePath: string, blockId: number, lineIndex: number | null) => void;
 
-  suspectFiles?: string[];
+  suspectCandidates?: SuspectCandidate[];
   selectedFile?: string;
   onSelectTargetFile?: (path: string) => void;
 };
@@ -114,7 +114,7 @@ export default function FixPreviewModal({
   onCancel,
   onJumpToBlockLine,
   onHoverBlockLine,
-  suspectFiles,
+  suspectCandidates,
   selectedFile,
   onSelectTargetFile,
  }: Props) {
@@ -154,16 +154,26 @@ export default function FixPreviewModal({
           {mode === "preview" ? "🤖 Agent Fix Preview" : "🔍 Manual Review"}
         </h3>
 
-        {suspectFiles && suspectFiles.length >= 1 && (
+        {suspectCandidates && suspectCandidates.length >= 1 && (
           <div style={{ padding: "8px 12px", borderBottom: "1px solid #eee", background: "#fafafa,"}}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6,}}>
               이 에러와 관련된 파일 후보
             </div>
 
-            {suspectFiles.map((file) => (
-              <label key={file} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer", }} >
-                <input type="radio" checked={file === selectedFile} onChange={() => onSelectTargetFile?.(file)} />
-                <code>{file}</code>
+            {suspectCandidates.map((file) => (
+              <label key={file.path} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer", opacity: selectedFile === file.path ? 1 : 0.8, }} >
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <input type="radio" checked={file.path === selectedFile} onChange={() => onSelectTargetFile?.(file.path)} />
+                  <code>{file.path}</code>
+                  <span style={{ fontSize: 11, color: "#2563eb", fontWeight: 600, }}>
+                    {file.score}%
+                  </span>
+                </div>
+                <ul style={{ marginLeft: 22, fontSize: 12, color: "#555" }}>
+                  {file.reasons.map((r, i) => (
+                    <li key={i}>{r}</li>
+                  ))}
+                </ul>
               </label>
             ))}
           </div>
